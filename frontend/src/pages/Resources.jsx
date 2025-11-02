@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import axios from 'axios';
-import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles } from 'lucide-react';
+import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles, Network } from 'lucide-react';
 import ResourceModal from '../components/ResourceModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -142,6 +142,13 @@ function Resources() {
                 className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 {t('dashboardTitle')}
+              </button>
+              <button
+                onClick={() => navigate('/architecture')}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors"
+              >
+                <Network className="w-4 h-4" />
+                <span className="text-sm font-medium">Diagram</span>
               </button>
               <button
                 onClick={() => navigate('/ai-insights')}

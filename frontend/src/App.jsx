@@ -5,6 +5,7 @@ import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Resources from './pages/Resources';
 import AIInsights from './pages/AIInsights';
+import ArchitectureDiagram from './pages/ArchitectureDiagram';
 import './i18n';
 
 function App() {
@@ -14,13 +15,19 @@ function App() {
   document.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
 
   return (
-    <Router>
+    <Router
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true
+      }}
+    >
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/resources" element={<Resources />} />
+        <Route path="/architecture" element={<ArchitectureDiagram />} />
         <Route path="/ai-insights" element={<AIInsights />} />
       </Routes>
     </Router>

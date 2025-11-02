@@ -29,6 +29,23 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
   const [tagKey, setTagKey] = useState('');
   const [tagValue, setTagValue] = useState('');
 
+  // Helper function to format datetime for datetime-local input
+  const formatDatetimeLocal = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString);
+      // Format as YYYY-MM-DDTHH:mm (no seconds, no timezone)
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    } catch {
+      return '';
+    }
+  };
+
   useEffect(() => {
     if (resource && mode === 'edit') {
       setFormData({
@@ -39,7 +56,8 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
         vpc_id: resource.vpc_id || '', subnet_id: resource.subnet_id || '',
         availability_zone: resource.availability_zone || '', security_groups: resource.security_groups || [],
         public_ip: resource.public_ip || '', private_ip: resource.private_ip || '',
-        instance_type: resource.instance_type || '', resource_creation_date: resource.resource_creation_date || '',
+        instance_type: resource.instance_type || '', 
+        resource_creation_date: formatDatetimeLocal(resource.resource_creation_date),
         dependencies: resource.dependencies || [], connected_resources: resource.connected_resources || [],
         tags: resource.tags || {}, notes: resource.notes || ''
       });
@@ -211,7 +229,35 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave(formData);
+    
+    // Clean data before sending to backend
+    const cleanedData = {
+      ...formData,
+      // Convert empty strings to null for optional string fields
+      arn: formData.arn?.trim() || null,
+      account_id: formData.account_id?.trim() || null,
+      resource_id: formData.resource_id?.trim() || null,
+      environment: formData.environment?.trim() || null,
+      cost_center: formData.cost_center?.trim() || null,
+      owner: formData.owner?.trim() || null,
+      vpc_id: formData.vpc_id?.trim() || null,
+      subnet_id: formData.subnet_id?.trim() || null,
+      availability_zone: formData.availability_zone?.trim() || null,
+      public_ip: formData.public_ip?.trim() || null,
+      private_ip: formData.private_ip?.trim() || null,
+      instance_type: formData.instance_type?.trim() || null,
+      resource_creation_date: formData.resource_creation_date || null,
+      description: formData.description?.trim() || null,
+      notes: formData.notes?.trim() || null,
+      // Ensure arrays are arrays (not empty strings)
+      security_groups: Array.isArray(formData.security_groups) ? formData.security_groups : [],
+      dependencies: Array.isArray(formData.dependencies) ? formData.dependencies : [],
+      connected_resources: Array.isArray(formData.connected_resources) ? formData.connected_resources : [],
+      // Ensure tags is an object
+      tags: typeof formData.tags === 'object' && formData.tags !== null ? formData.tags : {}
+    };
+    
+    onSave(cleanedData);
   };
 
   if (!isOpen) return null;
