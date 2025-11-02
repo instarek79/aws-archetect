@@ -267,6 +267,59 @@ function TypeSpecificFields({ resourceType, properties = {}, onChange }) {
             Encryption at Rest
           </label>
         </div>
+
+        {/* Endpoint (Critical for connections) */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Endpoint * <span className="text-xs text-gray-500">(Connection string)</span>
+          </label>
+          <input
+            type="text"
+            value={safeProperties.endpoint || ''}
+            onChange={(e) => handleChange('endpoint', e.target.value)}
+            placeholder="mydb.abc123.us-east-1.rds.amazonaws.com"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            The DNS endpoint for database connections
+          </p>
+        </div>
+
+        {/* Port */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Port * <span className="text-xs text-gray-500">(Database port)</span>
+          </label>
+          <input
+            type="number"
+            value={safeProperties.port || ''}
+            onChange={(e) => handleChange('port', parseInt(e.target.value))}
+            placeholder="5432 (PostgreSQL), 3306 (MySQL), 1433 (SQL Server)"
+            min="1"
+            max="65535"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Default ports: PostgreSQL (5432), MySQL (3306), SQL Server (1433), Oracle (1521)
+          </p>
+        </div>
+
+        {/* Multiple Subnets for RDS (Multi-AZ) */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Subnet Groups (comma-separated)
+          </label>
+          <input
+            type="text"
+            value={safeProperties.subnet_groups ? safeProperties.subnet_groups.join(', ') : ''}
+            onChange={(e) => handleArrayChange('subnet_groups', e.target.value)}
+            placeholder="subnet-db-1a, subnet-db-1b, subnet-db-1c"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            RDS uses multiple subnets for high availability and failover
+          </p>
+        </div>
       </div>
     );
   }

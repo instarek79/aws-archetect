@@ -96,7 +96,7 @@ function ArchitectureDiagram() {
   const getResourceIcon = (type) => {
     const icons = {
       ec2: '🖥️',
-      s3: '🗄️',
+      s3: '🪣',
       rds: '🗃️',
       lambda: 'λ',
       vpc: '🔒',
@@ -108,6 +108,29 @@ function ArchitectureDiagram() {
       sqs: '📬'
     };
     return icons[type] || '📦';
+  };
+
+  const getCriticalInfo = (resource) => {
+    // Extract critical connection info based on resource type
+    const props = resource.type_specific_properties || {};
+    
+    if (resource.type === 'rds' && props.endpoint) {
+      // Show endpoint:port for RDS
+      return props.port ? `${props.endpoint.split('.')[0]}:${props.port}` : props.endpoint.split('.')[0];
+    }
+    
+    if (resource.type === 'elb' && props.dns_name) {
+      // Show shortened DNS name for load balancers
+      const parts = props.dns_name.split('.');
+      return parts[0]; // Just show the first part
+    }
+    
+    if (resource.type === 'lambda' && props.runtime) {
+      // Show runtime for Lambda
+      return props.runtime;
+    }
+    
+    return null;
   };
 
   const drawDiagram = () => {
@@ -281,6 +304,15 @@ function ArchitectureDiagram() {
     ctx.fillStyle = '#FFFFFFCC';
     ctx.fillText(resource.type.toUpperCase(), x + 38, y + 38);
     
+    // Show critical info: endpoint for RDS, DNS for ELB
+    const criticalInfo = getCriticalInfo(resource);
+    if (criticalInfo) {
+      ctx.font = '8px sans-serif';
+      ctx.fillStyle = '#FFFFFFAA';
+      const truncatedInfo = criticalInfo.length > 15 ? criticalInfo.substring(0, 15) + '...' : criticalInfo;
+      ctx.fillText(truncatedInfo, x + 38, y + 48);
+    }
+    
     // Environment badge
     if (resource.environment) {
       ctx.font = '8px sans-serif';
@@ -336,13 +368,31 @@ function ArchitectureDiagram() {
     resourceList.forEach(resource => {
       const region = resource.region || 'unknown';
       const vpcId = resource.vpc_id || 'no-vpc';
-      const subnetId = resource.subnet_id || 'no-subnet';
       
-      if (!structure[region]) structure[region] = {};
-      if (!structure[region][vpcId]) structure[region][vpcId] = {};
-      if (!structure[region][vpcId][subnetId]) structure[region][vpcId][subnetId] = [];
+      // Check for multi-subnet resources (RDS, ELB, etc.)
+      const subnetGroups = resource.type_specific_properties?.subnet_groups || 
+                          resource.type_specific_properties?.subnets;
       
-      structure[region][vpcId][subnetId].push(resource);
+      if (subnetGroups && Array.isArray(subnetGroups) && subnetGroups.length > 0) {
+        // Resource spans multiple subnets - show in all of them
+        subnetGroups.forEach(subnetId => {
+          if (!structure[region]) structure[region] = {};
+          if (!structure[region][vpcId]) structure[region][vpcId] = {};
+          if (!structure[region][vpcId][subnetId]) structure[region][vpcId][subnetId] = [];
+          
+          // Add resource to each subnet it belongs to
+          structure[region][vpcId][subnetId].push(resource);
+        });
+      } else {
+        // Single subnet resource - normal behavior
+        const subnetId = resource.subnet_id || 'no-subnet';
+        
+        if (!structure[region]) structure[region] = {};
+        if (!structure[region][vpcId]) structure[region][vpcId] = {};
+        if (!structure[region][vpcId][subnetId]) structure[region][vpcId][subnetId] = [];
+        
+        structure[region][vpcId][subnetId].push(resource);
+      }
     });
     
     return structure;
@@ -760,6 +810,137 @@ function ArchitectureDiagram() {
                         {conn}
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Type-Specific Properties */}
+              {selectedNode.type_specific_properties && Object.keys(selectedNode.type_specific_properties).length > 0 && (
+                <div className="border-t pt-4">
+                  <h5 className="font-medium text-sm mb-3 text-indigo-600">
+                    {selectedNode.type.toUpperCase()} Properties
+                  </h5>
+                  <div className="space-y-2 text-sm">
+                    {/* RDS-specific */}
+                    {selectedNode.type === 'rds' && (
+                      <>
+                        {selectedNode.type_specific_properties.endpoint && (
+                          <div className="bg-blue-50 p-2 rounded">
+                            <span className="font-medium text-blue-900">Endpoint:</span>
+                            <div className="text-xs text-blue-700 font-mono break-all">
+                              {selectedNode.type_specific_properties.endpoint}
+                            </div>
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.port && (
+                          <div>
+                            <span className="font-medium">Port:</span> {selectedNode.type_specific_properties.port}
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.engine && (
+                          <div>
+                            <span className="font-medium">Engine:</span> {selectedNode.type_specific_properties.engine}
+                            {selectedNode.type_specific_properties.engine_version && (
+                              <span className="text-gray-600"> ({selectedNode.type_specific_properties.engine_version})</span>
+                            )}
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.db_instance_class && (
+                          <div>
+                            <span className="font-medium">Instance Class:</span> {selectedNode.type_specific_properties.db_instance_class}
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.multi_az && (
+                          <div className="text-green-600 font-medium">
+                            ✓ Multi-AZ Enabled
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.subnet_groups && selectedNode.type_specific_properties.subnet_groups.length > 0 && (
+                          <div>
+                            <span className="font-medium">Subnet Groups:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {selectedNode.type_specific_properties.subnet_groups.map((sg, i) => (
+                                <span key={i} className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded">
+                                  {sg}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* ELB-specific */}
+                    {selectedNode.type === 'elb' && (
+                      <>
+                        {selectedNode.type_specific_properties.dns_name && (
+                          <div className="bg-blue-50 p-2 rounded">
+                            <span className="font-medium text-blue-900">DNS Name:</span>
+                            <div className="text-xs text-blue-700 font-mono break-all">
+                              {selectedNode.type_specific_properties.dns_name}
+                            </div>
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.lb_type && (
+                          <div>
+                            <span className="font-medium">Type:</span> {selectedNode.type_specific_properties.lb_type.toUpperCase()}
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.scheme && (
+                          <div>
+                            <span className="font-medium">Scheme:</span> {selectedNode.type_specific_properties.scheme}
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.subnets && selectedNode.type_specific_properties.subnets.length > 0 && (
+                          <div>
+                            <span className="font-medium">Subnets:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {selectedNode.type_specific_properties.subnets.map((subnet, i) => (
+                                <span key={i} className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded">
+                                  {subnet}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.target_groups && selectedNode.type_specific_properties.target_groups.length > 0 && (
+                          <div>
+                            <span className="font-medium">Target Groups:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {selectedNode.type_specific_properties.target_groups.map((tg, i) => (
+                                <span key={i} className="text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded">
+                                  {tg}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.listeners && (
+                          <div>
+                            <span className="font-medium">Listeners:</span> {selectedNode.type_specific_properties.listeners}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Lambda-specific */}
+                    {selectedNode.type === 'lambda' && selectedNode.type_specific_properties.runtime && (
+                      <>
+                        <div>
+                          <span className="font-medium">Runtime:</span> {selectedNode.type_specific_properties.runtime}
+                        </div>
+                        {selectedNode.type_specific_properties.memory_mb && (
+                          <div>
+                            <span className="font-medium">Memory:</span> {selectedNode.type_specific_properties.memory_mb} MB
+                          </div>
+                        )}
+                        {selectedNode.type_specific_properties.timeout_seconds && (
+                          <div>
+                            <span className="font-medium">Timeout:</span> {selectedNode.type_specific_properties.timeout_seconds}s
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               )}
