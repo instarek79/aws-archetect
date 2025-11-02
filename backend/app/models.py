@@ -50,6 +50,15 @@ class Resource(Base):
     instance_type = Column(String)  # EC2 instance type (t2.micro, m5.large, etc.) or similar for other resources
     resource_creation_date = Column(DateTime(timezone=True))  # When the AWS resource was actually created
     
+    # Type-Specific Properties (JSON column for flexible resource-specific data)
+    type_specific_properties = Column(JSON, default=dict)  # Stores resource-type specific fields
+    # Examples:
+    # EC2: {"ami_id": "ami-123", "os": "Ubuntu 22.04", "key_pair": "my-key", "ebs_optimized": true}
+    # RDS: {"engine": "postgres", "engine_version": "14.7", "storage_gb": 100, "multi_az": true}
+    # ELB: {"dns_name": "elb-123.amazonaws.com", "scheme": "internet-facing", "target_groups": [...], "listeners": [...]}
+    # S3: {"versioning": true, "encryption": "AES256", "public_access": false}
+    # Lambda: {"runtime": "python3.9", "memory_mb": 256, "timeout_seconds": 30, "handler": "index.handler"}
+    
     # Relationships & Dependencies
     dependencies = Column(JSON, default=list)  # Resource names/IDs this depends on
     connected_resources = Column(JSON, default=list)  # Resources connected to this

@@ -67,6 +67,9 @@ class ResourceBase(BaseModel):
     instance_type: Optional[str] = None
     resource_creation_date: Optional[datetime] = None
     
+    # Type-Specific Properties
+    type_specific_properties: Optional[dict] = {}
+    
     # Relationships & Dependencies
     dependencies: Optional[List[Any]] = []
     connected_resources: Optional[List[str]] = []
@@ -108,6 +111,9 @@ class ResourceUpdate(BaseModel):
     # Instance/Resource Configuration
     instance_type: Optional[str] = None
     resource_creation_date: Optional[datetime] = None
+    
+    # Type-Specific Properties
+    type_specific_properties: Optional[dict] = None
     
     # Relationships & Dependencies
     dependencies: Optional[List[Any]] = None

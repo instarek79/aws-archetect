@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Network, Download, RefreshCw, Layers, Filter, X } from 'lucide-react';
+import { Network, Download, RefreshCw, Layers, Filter, X, Database, Sparkles, Globe, LogOut, LayoutDashboard } from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function ArchitectureDiagram() {
-  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
+  const isRTL = i18n.language === 'ar';
   const [resources, setResources] = useState([]);
   const [filteredResources, setFilteredResources] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -422,6 +425,18 @@ function ArchitectureDiagram() {
     setSelectedVPC('all');
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    navigate('/login');
+  };
+
+  const toggleLanguage = () => {
+    const newLang = i18n.language === 'en' ? 'ar' : 'en';
+    i18n.changeLanguage(newLang);
+    document.dir = newLang === 'ar' ? 'rtl' : 'ltr';
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -431,8 +446,58 @@ function ArchitectureDiagram() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-gray-50">
-      {/* Header */}
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      {/* Navigation Toolbar */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-full px-4 sm:px-6 lg:px-8 py-3">
+          <div className="flex justify-between items-center">
+            <h1 className="text-xl font-bold text-gray-900">
+              Architecture Diagram
+            </h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span className="text-sm font-medium">{t('dashboardTitle') || 'Dashboard'}</span>
+              </button>
+              <button
+                onClick={() => navigate('/resources')}
+                className="flex items-center gap-2 px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
+              >
+                <Database className="w-4 h-4" />
+                <span className="text-sm font-medium">{t('resources') || 'Resources'}</span>
+              </button>
+              <button
+                onClick={() => navigate('/ai-insights')}
+                className="flex items-center gap-2 px-3 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span className="text-sm font-medium">{t('aiInsights') || 'AI Insights'}</span>
+              </button>
+              <button
+                onClick={toggleLanguage}
+                className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                <Globe className="w-4 h-4" />
+                <span className="text-sm font-medium">
+                  {i18n.language === 'en' ? 'العربية' : 'English'}
+                </span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="text-sm font-medium">{t('logout') || 'Logout'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Page Header with Filters */}
       <div className="bg-white shadow-sm border-b px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -509,9 +574,9 @@ function ArchitectureDiagram() {
       </div>
 
       {/* Diagram Area */}
-      <div className="flex-1 flex">
+      <div className="flex-1 flex min-h-[600px]">
         {/* Canvas */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-full">
           {filteredResources.length === 0 ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center">

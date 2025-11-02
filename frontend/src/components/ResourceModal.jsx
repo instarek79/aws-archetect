@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Wand2, Plus, Trash2 } from 'lucide-react';
 import axios from 'axios';
+import TypeSpecificFields from './TypeSpecificFields';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -20,7 +21,8 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
     vpc_id: '', subnet_id: '', availability_zone: '', security_groups: [],
     public_ip: '', private_ip: '', instance_type: '', resource_creation_date: '',
     dependencies: [], connected_resources: [],
-    tags: {}, notes: ''
+    tags: {}, notes: '',
+    type_specific_properties: {}
   });
 
   const [dependencyInput, setDependencyInput] = useState('');
@@ -254,7 +256,9 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
       dependencies: Array.isArray(formData.dependencies) ? formData.dependencies : [],
       connected_resources: Array.isArray(formData.connected_resources) ? formData.connected_resources : [],
       // Ensure tags is an object
-      tags: typeof formData.tags === 'object' && formData.tags !== null ? formData.tags : {}
+      tags: typeof formData.tags === 'object' && formData.tags !== null ? formData.tags : {},
+      // Ensure type_specific_properties is an object
+      type_specific_properties: typeof formData.type_specific_properties === 'object' && formData.type_specific_properties !== null ? formData.type_specific_properties : {}
     };
     
     onSave(cleanedData);
@@ -286,7 +290,8 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
               { id: 'basic', label: t('basicInfo') || 'Basic Info' },
               { id: 'aws', label: t('awsIdentifiers') || 'AWS Identifiers' },
               { id: 'details', label: t('details') || 'Details' },
-              { id: 'networking', label: t('networking') || 'Networking' }
+              { id: 'networking', label: t('networking') || 'Networking' },
+              { id: 'typespecific', label: `${formData.type.toUpperCase()} Properties` }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -784,6 +789,17 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TYPE-SPECIFIC PROPERTIES TAB */}
+          {activeTab === 'typespecific' && (
+            <div className="space-y-4">
+              <TypeSpecificFields
+                resourceType={formData.type}
+                properties={formData.type_specific_properties}
+                onChange={(newProps) => setFormData({ ...formData, type_specific_properties: newProps })}
+              />
             </div>
           )}
 
