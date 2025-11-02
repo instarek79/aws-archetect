@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.git
+.gitignore
+.vscode
+.idea
+*.md
+.env.local
+.env.production
