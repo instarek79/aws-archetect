@@ -6,9 +6,9 @@ class Settings(BaseSettings):
     # Database
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "authdb"
-    POSTGRES_HOST: str = "db"
-    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "auth_db"
+    POSTGRES_HOST: str = "127.0.0.1"  # Use 127.0.0.1 instead of localhost to force IPv4
+    POSTGRES_PORT: int = 5433  # Docker container mapped to 5433 to avoid conflict with local PostgreSQL
     
     # JWT
     JWT_SECRET_KEY: str = "your-secret-key-change-in-production"
@@ -19,9 +19,17 @@ class Settings(BaseSettings):
     # OpenAI / LLM
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-3.5-turbo"
-    LLM_PROVIDER: str = "openai"  # "openai" or "ollama"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
     OLLAMA_MODEL: str = "llama2"
+    
+    @property
+    def LLM_PROVIDER(self) -> str:
+        """Auto-detect LLM provider based on configuration"""
+        if self.OLLAMA_BASE_URL:
+            return "ollama"
+        elif self.OPENAI_API_KEY:
+            return "openai"
+        return "none"
     
     # CORS
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
@@ -33,6 +41,9 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        # Ignore extra environment variables
+        extra = "ignore"
+        arbitrary_types_allowed = True
 
 
 settings = Settings()

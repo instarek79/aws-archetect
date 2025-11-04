@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Resources from './pages/Resources';
 import AIInsights from './pages/AIInsights';
 import ArchitectureDiagram from './pages/ArchitectureDiagram';
+import Import from './pages/Import';
 import './i18n';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
         <Route path="/resources" element={<Resources />} />
         <Route path="/architecture" element={<ArchitectureDiagram />} />
         <Route path="/ai-insights" element={<AIInsights />} />
+        <Route path="/import" element={<Import />} />
       </Routes>
     </Router>
   );

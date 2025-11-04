@@ -37,19 +37,40 @@ function Login() {
     setError('');
     setLoading(true);
 
+    console.log('=== LOGIN ATTEMPT ===');
+    console.log('API URL:', API_URL);
+    console.log('Form Data:', { email: formData.email, password: '***' });
+
     try {
+      console.log('Sending POST request to:', `${API_URL}/auth/login`);
       const response = await axios.post(`${API_URL}/auth/login`, formData);
+      
+      console.log('Login response received:', response.status);
+      console.log('Response data:', { 
+        hasAccessToken: !!response.data.access_token,
+        hasRefreshToken: !!response.data.refresh_token 
+      });
       
       // Store tokens in localStorage
       localStorage.setItem('access_token', response.data.access_token);
       localStorage.setItem('refresh_token', response.data.refresh_token);
       
+      console.log('Tokens stored, navigating to dashboard...');
       // Redirect to dashboard or home
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.detail || t('loginError'));
+      console.error('=== LOGIN ERROR ===');
+      console.error('Error object:', err);
+      console.error('Response status:', err.response?.status);
+      console.error('Response data:', err.response?.data);
+      console.error('Error message:', err.message);
+      
+      const errorMessage = err.response?.data?.detail || err.message || t('loginError');
+      console.error('Setting error message:', errorMessage);
+      setError(errorMessage);
     } finally {
       setLoading(false);
+      console.log('Login attempt completed');
     }
   };
 

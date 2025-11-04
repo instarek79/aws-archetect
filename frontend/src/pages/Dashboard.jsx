@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import axios from 'axios';
-import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity } from 'lucide-react';
+import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity, Upload } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -154,6 +154,13 @@ function Dashboard() {
               >
                 <Sparkles className="w-4 h-4" />
                 <span className="text-sm font-medium">{t('aiInsights')}</span>
+              </button>
+              <button
+                onClick={() => navigate('/import')}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                <span className="text-sm font-medium">Import</span>
               </button>
               <button
                 onClick={toggleLanguage}

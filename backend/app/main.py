@@ -2,14 +2,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.database import engine, Base
-from app.routers import auth, resources, ai
+from app.routers import auth, resources, ai, import_router
+import logging
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create database tables with error handling
+try:
+    logger.info("Creating database tables...")
+    Base.metadata.create_all(bind=engine)
+    logger.info("✅ Database tables created successfully")
+except Exception as e:
+    logger.error(f"❌ Database initialization error: {e}")
+    raise
 
 app = FastAPI(
     title="JWT Authentication API",
-    description="FastAPI backend with JWT authentication, AWS Resource Management, and AI Analysis",
+    description="FastAPI backend with JWT authentication, AWS Resource Management, AI Analysis, and Data Import",
     version="1.0.0"
 )
 
@@ -26,6 +37,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(resources.router)
 app.include_router(ai.router)
+app.include_router(import_router.router)
 
 
 @app.get("/health")

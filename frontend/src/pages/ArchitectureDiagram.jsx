@@ -198,17 +198,36 @@ function ArchitectureDiagram() {
         Object.entries(subnets).forEach(([subnetId, resourcesInSubnet]) => {
           const subnetHeight = Math.ceil(resourcesInSubnet.length / 3) * 100 + 60;
           
+          // Check if this is the multi-subnet section
+          const isMultiSubnet = subnetId === 'multi-subnet';
+          
           // Subnet container
-          ctx.strokeStyle = '#10B981';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 3]);
+          if (isMultiSubnet) {
+            // Multi-subnet resources: different color and style
+            ctx.strokeStyle = '#F59E0B'; // Orange for multi-subnet
+            ctx.fillStyle = '#FEF3C744'; // Light orange background
+            ctx.fillRect(xOffset + 10, subnetYOffset, vpcWidth - 20, subnetHeight);
+            ctx.lineWidth = 3;
+            ctx.setLineDash([10, 5]);
+          } else {
+            // Regular subnet
+            ctx.strokeStyle = '#10B981';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]);
+          }
           ctx.strokeRect(xOffset + 10, subnetYOffset, vpcWidth - 20, subnetHeight);
           ctx.setLineDash([]);
           
           // Subnet label
-          ctx.fillStyle = '#047857';
-          ctx.font = 'bold 12px sans-serif';
-          ctx.fillText(`Subnet: ${subnetId || 'Default'}`, xOffset + 20, subnetYOffset + 20);
+          if (isMultiSubnet) {
+            ctx.fillStyle = '#D97706'; // Orange text
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText('🌐 Multi-Subnet Resources', xOffset + 20, subnetYOffset + 20);
+          } else {
+            ctx.fillStyle = '#047857';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText(`Subnet: ${subnetId || 'Default'}`, xOffset + 20, subnetYOffset + 20);
+          }
           
           // Draw resources in subnet
           resourcesInSubnet.forEach((resource, idx) => {
@@ -335,6 +354,20 @@ function ArchitectureDiagram() {
       ctx.fillText(typeText, x + width - typeWidth - 4, y + height - 10);
     }
     
+    // Multi-subnet badge (if resource spans multiple subnets)
+    if (resource._isMultiSubnet && resource._subnetList) {
+      ctx.font = 'bold 9px sans-serif';
+      const subnetCount = resource._subnetList.length;
+      const badgeText = `${subnetCount} Subnets`;
+      const badgeWidth = ctx.measureText(badgeText).width + 12;
+      
+      // Orange badge for multi-subnet
+      ctx.fillStyle = '#F59E0B';
+      roundRect(ctx, x + 8, y + height - 20, badgeWidth, 14, 3, true, false);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(badgeText, x + 14, y + height - 10);
+    }
+    
     // Border for selected
     if (isSelected) {
       ctx.strokeStyle = '#3B82F6';
@@ -373,19 +406,21 @@ function ArchitectureDiagram() {
       const subnetGroups = resource.type_specific_properties?.subnet_groups || 
                           resource.type_specific_properties?.subnets;
       
-      if (subnetGroups && Array.isArray(subnetGroups) && subnetGroups.length > 0) {
-        // Resource spans multiple subnets - show in all of them
-        subnetGroups.forEach(subnetId => {
-          if (!structure[region]) structure[region] = {};
-          if (!structure[region][vpcId]) structure[region][vpcId] = {};
-          if (!structure[region][vpcId][subnetId]) structure[region][vpcId][subnetId] = [];
-          
-          // Add resource to each subnet it belongs to
-          structure[region][vpcId][subnetId].push(resource);
-        });
+      if (subnetGroups && Array.isArray(subnetGroups) && subnetGroups.length > 1) {
+        // Multi-subnet resource - place in special "multi-subnet" section
+        const multiSubnetKey = 'multi-subnet';
+        
+        if (!structure[region]) structure[region] = {};
+        if (!structure[region][vpcId]) structure[region][vpcId] = {};
+        if (!structure[region][vpcId][multiSubnetKey]) structure[region][vpcId][multiSubnetKey] = [];
+        
+        // Mark resource as multi-subnet and store subnet list
+        resource._isMultiSubnet = true;
+        resource._subnetList = subnetGroups;
+        structure[region][vpcId][multiSubnetKey].push(resource);
       } else {
         // Single subnet resource - normal behavior
-        const subnetId = resource.subnet_id || 'no-subnet';
+        const subnetId = resource.subnet_id || (subnetGroups && subnetGroups[0]) || 'no-subnet';
         
         if (!structure[region]) structure[region] = {};
         if (!structure[region][vpcId]) structure[region][vpcId] = {};

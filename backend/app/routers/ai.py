@@ -15,7 +15,7 @@ router = APIRouter(prefix="/ai", tags=["ai-analysis"])
 async def call_openai(prompt: str, context: str = "") -> str:
     """Call OpenAI API for analysis"""
     try:
-        import openai
+        from openai import OpenAI
         
         if not settings.OPENAI_API_KEY:
             raise HTTPException(
@@ -23,7 +23,7 @@ async def call_openai(prompt: str, context: str = "") -> str:
                 detail="OpenAI API key not configured. Please set OPENAI_API_KEY in environment variables."
             )
         
-        openai.api_key = settings.OPENAI_API_KEY
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
         
         system_message = """You are an AWS architecture expert. Analyze the provided AWS resources and give professional insights.
 Focus on:
@@ -44,7 +44,7 @@ Be concise, actionable, and professional."""
         
         messages.append({"role": "user", "content": prompt})
         
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=settings.OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
@@ -66,44 +66,74 @@ Be concise, actionable, and professional."""
 
 
 async def call_ollama(prompt: str, context: str = "") -> str:
-    """Call Ollama local LLM for analysis"""
+    """Call Ollama local LLM for analysis using native API"""
     try:
         import httpx
         
-        full_prompt = f"""You are an AWS architecture expert. Analyze the provided AWS resources.
+        system_message = """You are an AWS architecture expert. Analyze the provided AWS resources and give professional insights.
+Focus on:
+1. Architecture patterns and best practices
+2. Cost optimization opportunities
+3. Security improvements
+4. Scalability considerations
+5. High availability recommendations
 
-{context}
+Be concise, actionable, and professional."""
 
-User Question: {prompt}
-
-Provide professional insights focusing on architecture, cost optimization, security, and best practices."""
-
-        async with httpx.AsyncClient() as client:
+        # Combine all context into single prompt for Ollama
+        full_prompt = f"{system_message}\n\n"
+        if context:
+            full_prompt += f"User's AWS Resources:\n{context}\n\n"
+        full_prompt += f"User Question: {prompt}\n\nProvide detailed analysis:"
+        
+        # Use native Ollama API (more reliable than OpenAI-compatible)
+        ollama_base = settings.OLLAMA_BASE_URL.replace("/v1", "")  # Remove /v1 suffix
+        
+        print(f"🔄 Sending request to Ollama at {ollama_base}...")
+        print(f"📝 Model: {settings.OLLAMA_MODEL}")
+        print(f"📏 Prompt length: {len(full_prompt)} chars")
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes timeout for slow systems
             response = await client.post(
-                f"{settings.OLLAMA_BASE_URL}/api/generate",
+                f"{ollama_base}/api/generate",
                 json={
                     "model": settings.OLLAMA_MODEL,
                     "prompt": full_prompt,
-                    "stream": False
-                },
-                timeout=60.0
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 1500
+                    }
+                }
             )
             
             if response.status_code != 200:
+                print(f"❌ Ollama returned status {response.status_code}")
+                print(f"Response: {response.text[:500]}")
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Ollama service unavailable. Make sure Ollama is running."
+                    detail=f"Ollama service returned {response.status_code}. Make sure Ollama is running."
                 )
             
             result = response.json()
-            return result.get("response", "")
+            response_text = result.get("response", "No response from Ollama")
+            print(f"✅ Ollama responded successfully!")
+            print(f"📊 Response length: {len(response_text)} chars")
+            print(f"⏱️  Generation took: {result.get('total_duration', 0) / 1e9:.2f}s")
+            return response_text
             
-    except ImportError:
+    except httpx.ConnectError as e:
+        import traceback
+        print(f"❌ Ollama connection error: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="httpx library not installed. Run: pip install httpx"
+            detail=f"Cannot connect to Ollama at {ollama_base}. Make sure Ollama is running on your host machine."
         )
     except Exception as e:
+        import traceback
+        print(f"❌ Ollama error: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ollama error: {str(e)}"
