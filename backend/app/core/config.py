@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "auth_db"
     POSTGRES_HOST: str = "127.0.0.1"  # Use 127.0.0.1 instead of localhost to force IPv4
-    POSTGRES_PORT: int = 5433  # Docker container mapped to 5433 to avoid conflict with local PostgreSQL
+    POSTGRES_PORT: int = 5433  # Docker PostgreSQL on port 5433 (avoid conflict with local PostgreSQL on 5432)
     
     # JWT
     JWT_SECRET_KEY: str = "your-secret-key-change-in-production"
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-3.5-turbo"
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
-    OLLAMA_MODEL: str = "llama2"
+    OLLAMA_MODEL: str = "qwen2.5"
     
     @property
     def LLM_PROVIDER(self) -> str:
@@ -31,8 +31,8 @@ class Settings(BaseSettings):
             return "openai"
         return "none"
     
-    # CORS
-    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
+    # CORS - Allow all origins for development (includes localhost and IP addresses)
+    BACKEND_CORS_ORIGINS: list = ["*"]
     
     @property
     def DATABASE_URL(self) -> str:

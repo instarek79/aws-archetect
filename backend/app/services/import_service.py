@@ -56,13 +56,13 @@ class ImportService:
             # Use local Ollama
             try:
                 import httpx
-                # Create client with timeout to prevent hanging
+                # Create client with longer timeout for LLM inference
                 self.client = OpenAI(
                     base_url=ollama_url,
                     api_key="ollama",  # Ollama doesn't need a real API key
-                    timeout=httpx.Timeout(5.0, connect=2.0)  # 5s total, 2s connect timeout
+                    timeout=httpx.Timeout(120.0, connect=5.0)  # 120s total, 5s connect
                 )
-                self.model = os.getenv("OLLAMA_MODEL", "llama3.2")
+                self.model = os.getenv("OLLAMA_MODEL", "qwen2.5")
                 print(f"SUCCESS: Using local Ollama at {ollama_url} with model {self.model}")
             except Exception as e:
                 print(f"WARNING: Could not connect to Ollama: {e}")
@@ -129,6 +129,14 @@ class ImportService:
                 
                 for sheet_name in excel_file.sheet_names:
                     df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    original_cols = len(df.columns)
+                    
+                    # IMMEDIATELY drop all "Unnamed:" columns - don't need them at all
+                    df = df.loc[:, ~df.columns.str.contains('^Unnamed:', na=False)]
+                    
+                    final_cols = len(df.columns)
+                    print(f"Sheet '{sheet_name}': Dropped {original_cols - final_cols} unnamed columns, kept {final_cols} columns")
+                    
                     # Replace all non-JSON-compliant values with None
                     if NUMPY_AVAILABLE:
                         df = df.replace([np.inf, -np.inf, np.nan], None)
@@ -196,6 +204,14 @@ class ImportService:
                         "error": f"Unable to decode file. The file contains characters that cannot be read. Please save the file as UTF-8 CSV and try again. (Error: {str(last_error)[:200]})"
                     }
                 
+                original_cols = len(df.columns)
+                
+                # IMMEDIATELY drop all "Unnamed:" columns - don't need them at all
+                df = df.loc[:, ~df.columns.str.contains('^Unnamed:', na=False)]
+                
+                final_cols = len(df.columns)
+                print(f"CSV: Dropped {original_cols - final_cols} unnamed columns, kept {final_cols} columns")
+                
                 # Replace all non-JSON-compliant values with None
                 if NUMPY_AVAILABLE:
                     df = df.replace([np.inf, -np.inf, np.nan], None)
@@ -259,43 +275,41 @@ class ImportService:
                 "error": "No LLM configured. Please set OLLAMA_BASE_URL (for local) or OPENAI_API_KEY (for cloud)."
             }
         
-        # Take first few rows as sample
-        sample = sample_data[:5] if len(sample_data) > 5 else sample_data
+        # Take ONLY 1 row as sample to keep prompt small
+        sample = sample_data[:1] if len(sample_data) > 0 else sample_data
+        
+        # Limit columns to max 10 to prevent huge prompts
+        if sample:
+            all_columns = list(sample[0].keys())
+            if len(all_columns) > 10:
+                # Take first 10 columns
+                limited_columns = all_columns[:10]
+                sample = [{k: row.get(k) for k in limited_columns} for row in sample]
+                print(f"Limited sample to {len(limited_columns)} columns (from {len(all_columns)})")
+        
+        # Send only essential schema to keep prompt small
+        essential_schema = {
+            "required_fields": ["name", "resource_type", "region"],
+            "optional_fields": ["account_id", "arn", "status", "cost_per_month", "tags"],
+            "resource_types": ["ec2", "rds", "s3", "lambda", "elb", "vpc"]
+        }
         
         prompt = f"""
-You are an AWS resource data analyst. Analyze the following data from a spreadsheet and help map it to our database schema.
+Analyze this AWS resource data and suggest field mappings.
 
-Sheet Name: {sheet_name}
-
-Sample Data (first {len(sample)} rows):
+Sample (1 row):
 {json.dumps(sample, indent=2)}
 
-Our Database Schema:
-{json.dumps(self.schema_definition, indent=2)}
+Map to schema:
+{json.dumps(essential_schema, indent=2)}
 
-Your task:
-1. Identify which columns in the data correspond to our database fields
-2. Detect the resource type(s) in the data (ec2, rds, s3, lambda, elb, etc.)
-3. Identify any type-specific properties
-4. Suggest data transformations if needed
-5. Flag any missing required fields
-
-Respond in JSON format with this structure:
+Respond with JSON:
 {{
-  "detected_resource_type": "ec2|rds|s3|...",
-  "confidence": "high|medium|low",
+  "detected_resource_type": "ec2|rds|s3|lambda|elb|vpc",
   "field_mappings": {{
-    "column_name_in_file": "database_field_name"
+    "csv_column_name": "schema_field_name"
   }},
-  "type_specific_mappings": {{
-    "column_name": "type_specific_property_name"
-  }},
-  "transformations_needed": [
-    {{"field": "field_name", "description": "what needs to be transformed", "example": "example transformation"}}
-  ],
-  "missing_required_fields": ["field1", "field2"],
-  "warnings": ["any data quality issues"],
-  "suggestions": ["helpful suggestions for the user"]
+  "missing_required_fields": []
 }}
 """
         
@@ -341,9 +355,23 @@ Respond in JSON format with this structure:
             }
             
         except Exception as e:
+            error_msg = str(e)
+            # Log full error for debugging
+            print(f"ERROR: LLM analysis failed with: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            
+            # Provide helpful error messages for common issues
+            if "500 Internal Server Error" in error_msg or "Internal Server Error" in error_msg:
+                error_msg = "Ollama returned an error. The model might not be loaded. Try: ollama run llama3.2"
+            elif "timeout" in error_msg.lower():
+                error_msg = "Ollama request timed out. The model might be loading or the server is busy. Please try again."
+            elif "connection" in error_msg.lower():
+                error_msg = "Cannot connect to Ollama. Make sure Ollama is running on http://localhost:11434"
+            
             return {
                 "success": False,
-                "error": f"LLM analysis failed: {str(e)}"
+                "error": f"LLM analysis failed: {error_msg}"
             }
     
     def apply_mappings(self, data: List[Dict], mappings: Dict[str, str], 

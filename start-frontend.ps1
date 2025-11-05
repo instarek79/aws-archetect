@@ -1,38 +1,51 @@
-# Start Frontend Locally (for development)
-Write-Host "Starting Frontend Server..." -ForegroundColor Cyan
+# ============================================================================
+#  START FRONTEND
+#  Run this AFTER starting backend (START-BACKEND.ps1)
+# ============================================================================
+
+$ErrorActionPreference = "Stop"
+
+Write-Host ""
+Write-Host "================================================================================" -ForegroundColor Cyan
+Write-Host "           STARTING FRONTEND" -ForegroundColor Cyan
+Write-Host "================================================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check if Node.js is installed
-$nodeVersion = node --version 2>$null
-if (-not $nodeVersion) {
-    Write-Host "Node.js is not installed!" -ForegroundColor Red
-    Write-Host "Install Node.js from: https://nodejs.org/" -ForegroundColor Yellow
-    exit 1
-}
-
-Write-Host "Node.js found: $nodeVersion" -ForegroundColor Green
-Write-Host ""
-
-# Navigate to frontend directory
-Set-Location frontend
-
-# Check if node_modules exists
-if (-not (Test-Path "node_modules")) {
-    Write-Host "Installing npm dependencies..." -ForegroundColor Yellow
-    npm install
-    Write-Host "Dependencies installed" -ForegroundColor Green
+# Check if backend is running
+Write-Host "Checking if backend is running..." -ForegroundColor Yellow
+try {
+    $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+    Write-Host "  Backend is running!" -ForegroundColor Green
+} catch {
+    Write-Host "  WARNING: Backend is not running!" -ForegroundColor Red
+    Write-Host "  Please start backend first: .\START-BACKEND.ps1" -ForegroundColor Yellow
     Write-Host ""
+    $continue = Read-Host "Continue anyway? (y/n)"
+    if ($continue -ne "y") {
+        exit 1
+    }
 }
 
-Write-Host "Configuration:" -ForegroundColor Cyan
-Write-Host "  Frontend URL: http://localhost:3000" -ForegroundColor White
-Write-Host "  Backend API: http://localhost:8000" -ForegroundColor White
 Write-Host ""
 
-Write-Host "Starting Vite dev server..." -ForegroundColor Yellow
-Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
+# Navigate to frontend
+cd frontend
+
+Write-Host "================================================================================" -ForegroundColor Green
+Write-Host "  STARTING VITE DEV SERVER" -ForegroundColor Green
+Write-Host "================================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "═══════════════════════════════════════════════════" -ForegroundColor DarkGray
+Write-Host "Frontend:  http://localhost:3000" -ForegroundColor Cyan
+Write-Host "Backend:   http://localhost:8000" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Login Credentials:" -ForegroundColor Yellow
+Write-Host "  Email:     admin@example.com" -ForegroundColor White
+Write-Host "  Password:  admin123" -ForegroundColor White
+Write-Host ""
+Write-Host "================================================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "Starting Vite..." -ForegroundColor Yellow
+Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
 # Start Vite dev server

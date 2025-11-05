@@ -25,7 +25,7 @@ class Resource(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, index=True)
     type = Column(String, nullable=False, index=True)
-    region = Column(String, nullable=False)
+    region = Column(String, nullable=True, default="unknown")  # Allow null, default to unknown
     
     # AWS Identifiers
     arn = Column(String, index=True)  # Amazon Resource Name
