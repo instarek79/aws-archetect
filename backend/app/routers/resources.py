@@ -11,6 +11,28 @@ from app.utils.arn_parser import parse_arn, extract_resource_info_from_arn, vali
 
 router = APIRouter(prefix="/resources", tags=["resources"])
 
+# Linked/metadata resources - not counted as main resources but shown separately
+LINKED_RESOURCE_TYPES = {
+    'config',                    # AWS Config rules - monitoring/compliance
+    'security_group_rule',       # Rules belong to security groups
+    'rds_snapshot',              # Backups for RDS
+    'rds_backup',                # Auto-backups for RDS
+    'aurora_snapshot',           # Backups for Aurora
+    'snapshot',                  # EBS snapshots
+    'rds_parameter_group',       # RDS config
+    'rds_option_group',          # RDS config
+    'aurora_parameter_group',    # Aurora config
+    'db_subnet_group',           # RDS networking config
+    'dhcp_options',              # VPC config
+    'resource-explorer-2',       # AWS internal indexing
+    'flow_log',                  # VPC logging config
+    'ipam',                      # IP address management
+    'ipam_scope',                # IPAM metadata
+    'ipam_discovery',            # IPAM metadata
+    'ipam_discovery_assoc',      # IPAM metadata
+    'network_insights',          # Analysis tools
+}
+
 
 # ARN Parse Request Schema
 class ARNParseRequest(BaseModel):
@@ -25,86 +47,88 @@ class ARNParseResponse(BaseModel):
 
 @router.get("/stats")
 def get_resource_stats(
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get resource statistics for dashboard"""
-    from sqlalchemy import func
+    """Get resource statistics for dashboard - separates main resources from linked/metadata"""
+    from sqlalchemy import func, not_
     
-    # Total count
-    total = db.query(func.count(Resource.id)).filter(
-        Resource.created_by == current_user.id
-    ).scalar()
-    
-    # Count by type
+    # Count by type (all resources) - no user filter
     type_counts = db.query(
         Resource.type, func.count(Resource.id)
-    ).filter(
-        Resource.created_by == current_user.id
     ).group_by(Resource.type).all()
-    by_type = {t: c for t, c in type_counts}
     
-    # Count by region
+    # Separate main resources from linked resources
+    main_types = {}
+    linked_types = {}
+    main_total = 0
+    linked_total = 0
+    
+    for t, c in type_counts:
+        if t in LINKED_RESOURCE_TYPES:
+            linked_types[t] = c
+            linked_total += c
+        else:
+            main_types[t] = c
+            main_total += c
+    
+    # Count by region (main resources only) - no user filter
     region_counts = db.query(
         Resource.region, func.count(Resource.id)
     ).filter(
-        Resource.created_by == current_user.id
+        not_(Resource.type.in_(LINKED_RESOURCE_TYPES))
     ).group_by(Resource.region).all()
-    by_region = {r: c for r, c in region_counts}
+    by_region = {r: c for r, c in region_counts if r}
     
-    # Count by status
+    # Count by status (main resources only) - no user filter
     status_counts = db.query(
         Resource.status, func.count(Resource.id)
     ).filter(
-        Resource.created_by == current_user.id
+        not_(Resource.type.in_(LINKED_RESOURCE_TYPES))
     ).group_by(Resource.status).all()
-    by_status = {s: c for s, c in status_counts}
+    by_status = {s: c for s, c in status_counts if s}
     
-    # Network resources (VPCs, Subnets, Security Groups)
+    # Network resources (VPCs, Subnets, Security Groups) - no user filter
     vpc_count = db.query(func.count(func.distinct(Resource.vpc_id))).filter(
-        Resource.created_by == current_user.id,
         Resource.vpc_id.isnot(None)
     ).scalar()
     
     subnet_count = db.query(func.count(Resource.id)).filter(
-        Resource.created_by == current_user.id,
         Resource.type == 'subnet'
     ).scalar()
     
     security_group_count = db.query(func.count(Resource.id)).filter(
-        Resource.created_by == current_user.id,
         Resource.type == 'security_group'
     ).scalar()
     
-    # Count unique availability zones
+    # Count unique availability zones - no user filter
     az_count = db.query(func.count(func.distinct(Resource.availability_zone))).filter(
-        Resource.created_by == current_user.id,
         Resource.availability_zone.isnot(None)
     ).scalar()
     
-    # Count by account
+    # Count by account (main resources only) - no user filter
     account_counts = db.query(
         Resource.account_id, func.count(Resource.id)
     ).filter(
-        Resource.created_by == current_user.id,
         Resource.account_id.isnot(None),
-        Resource.account_id != ''
+        Resource.account_id != '',
+        not_(Resource.type.in_(LINKED_RESOURCE_TYPES))
     ).group_by(Resource.account_id).all()
     by_account = {a: c for a, c in account_counts if a}
     
-    # Count by environment
+    # Count by environment (main resources only) - no user filter
     env_counts = db.query(
         Resource.environment, func.count(Resource.id)
     ).filter(
-        Resource.created_by == current_user.id,
         Resource.environment.isnot(None),
-        Resource.environment != ''
+        Resource.environment != '',
+        not_(Resource.type.in_(LINKED_RESOURCE_TYPES))
     ).group_by(Resource.environment).all()
     by_environment = {e: c for e, c in env_counts if e}
     
     return {
-        "total": total,
-        "by_type": by_type,
+        "total": main_total,
+        "total_all": main_total + linked_total,
+        "by_type": main_types,
         "by_region": by_region,
         "by_status": by_status,
         "by_account": by_account,
@@ -115,8 +139,12 @@ def get_resource_stats(
             "security_groups": security_group_count,
             "availability_zones": az_count
         },
-        "type_count": len(by_type),
-        "region_count": len(by_region)
+        "type_count": len(main_types),
+        "region_count": len(by_region),
+        "linked": {
+            "total": linked_total,
+            "by_type": linked_types
+        }
     }
 
 
@@ -124,13 +152,10 @@ def get_resource_stats(
 def get_resources(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all resources for the authenticated user"""
-    resources = db.query(Resource).filter(
-        Resource.created_by == current_user.id
-    ).offset(skip).limit(limit).all()
+    """Get all resources - no authentication required"""
+    resources = db.query(Resource).offset(skip).limit(limit).all()
     return resources
 
 

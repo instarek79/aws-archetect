@@ -2,24 +2,80 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import axios from 'axios';
-import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles, Network, CheckSquare, Square, Settings, Filter, Search, X, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, Copy, ExternalLink, MoreHorizontal, Download, RefreshCw } from 'lucide-react';
+import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles, Network, CheckSquare, Square, Settings, Filter, Search, X, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, Copy, ExternalLink, MoreHorizontal, Download, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import ResourceModal from '../components/ResourceModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Linked/metadata resource types (not counted as main resources)
+const LINKED_RESOURCE_TYPES = new Set([
+  'config', 'security_group_rule', 'rds_snapshot', 'rds_backup', 'aurora_snapshot',
+  'snapshot', 'rds_parameter_group', 'rds_option_group', 'aurora_parameter_group',
+  'db_subnet_group', 'dhcp_options', 'resource-explorer-2', 'flow_log',
+  'ipam', 'ipam_scope', 'ipam_discovery', 'ipam_discovery_assoc', 'network_insights'
+]);
+
+// Resource categories
+const RESOURCE_CATEGORIES = {
+  infrastructure: {
+    label: 'Infrastructure',
+    types: ['ec2', 'rds', 'aurora', 's3', 'ebs', 'lambda', 'ecs', 'eks', 'elasticache',
+            'dynamodb', 'elasticfilesystem', 'mq', 'memorydb', 'apprunner', 'elasticbeanstalk']
+  },
+  network: {
+    label: 'Network',
+    types: ['vpc', 'subnet', 'security_group', 'eni', 'eip', 'nat_gateway', 'igw',
+            'route_table', 'nacl', 'vpc_endpoint', 'vpc_peering', 'transit_gateway',
+            'elasticloadbalancing', 'target_group', 'cloudfront', 'apigateway', 'route53']
+  },
+  identity: {
+    label: 'Identity & Access',
+    types: ['iam_role', 'iam_policy', 'iam_user', 'iam_group', 'iam', 'instance_profile',
+            'secrets_manager', 'kms', 'acm_certificate']
+  },
+  devops: {
+    label: 'DevOps & CI/CD',
+    types: ['codebuild', 'codepipeline', 'codedeploy', 'codecommit', 'codeconnections',
+            'codestar-connections', 'cloudformation', 'cfn_stack', 'servicecatalog']
+  },
+  monitoring: {
+    label: 'Monitoring & Logging',
+    types: ['log_group', 'cloudwatch', 'cloudwatch_alarm', 'cloudtrail', 'eventbridge',
+            'eventbridge_rule', 'sns', 'ses', 'guardduty', 'access-analyzer']
+  },
+  storage: {
+    label: 'Storage & Backup',
+    types: ['ami', 'snapshot', 'backup_vault', 'backup_plan', 'transfer']
+  },
+  other: {
+    label: 'Other',
+    types: ['ssm', 'ssm_document', 'ssm_parameter', 'waf', 'wafv2', 'dms', 'athena',
+            'ecr', 'launch_template', 'key_pair', 'resource-groups']
+  }
+};
+
+// Get category for a resource type
+const getResourceCategory = (type) => {
+  for (const [category, data] of Object.entries(RESOURCE_CATEGORIES)) {
+    if (data.types.includes(type)) return category;
+  }
+  return 'other';
+};
+
 // Default column configuration
 const DEFAULT_COLUMNS = [
-  { id: 'select', label: '', width: 50, visible: true, sortable: false },
-  { id: 'name', label: 'Name', width: 250, visible: true, sortable: true },
-  { id: 'type', label: 'Type', width: 120, visible: true, sortable: true },
-  { id: 'region', label: 'Region', width: 120, visible: true, sortable: true },
-  { id: 'account_id', label: 'Account', width: 130, visible: true, sortable: true },
-  { id: 'status', label: 'Status', width: 100, visible: true, sortable: true },
-  { id: 'environment', label: 'Environment', width: 110, visible: false, sortable: true },
-  { id: 'vpc_id', label: 'VPC', width: 140, visible: false, sortable: true },
-  { id: 'tags', label: 'Tags', width: 100, visible: true, sortable: false },
-  { id: 'created_at', label: 'Created', width: 110, visible: true, sortable: true },
-  { id: 'actions', label: 'Actions', width: 100, visible: true, sortable: false },
+  { id: 'select', label: '', width: 50, minWidth: 40, visible: true, sortable: false, resizable: false },
+  { id: 'name', label: 'Name', width: 250, minWidth: 100, visible: true, sortable: true, resizable: true },
+  { id: 'type', label: 'Type', width: 120, minWidth: 80, visible: true, sortable: true, resizable: true },
+  { id: 'category', label: 'Category', width: 120, minWidth: 80, visible: false, sortable: true, resizable: true },
+  { id: 'region', label: 'Region', width: 120, minWidth: 80, visible: true, sortable: true, resizable: true },
+  { id: 'account_id', label: 'Account', width: 130, minWidth: 80, visible: true, sortable: true, resizable: true },
+  { id: 'status', label: 'Status', width: 100, minWidth: 60, visible: true, sortable: true, resizable: true },
+  { id: 'environment', label: 'Environment', width: 110, minWidth: 80, visible: false, sortable: true, resizable: true },
+  { id: 'vpc_id', label: 'VPC', width: 140, minWidth: 80, visible: false, sortable: true, resizable: true },
+  { id: 'tags', label: 'Tags', width: 100, minWidth: 60, visible: true, sortable: false, resizable: true },
+  { id: 'created_at', label: 'Created', width: 110, minWidth: 80, visible: true, sortable: true, resizable: true },
+  { id: 'actions', label: 'Actions', width: 100, minWidth: 80, visible: true, sortable: false, resizable: false },
 ];
 
 function Resources() {
@@ -40,12 +96,29 @@ function Resources() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   
-  // Column configuration
+  // Load display settings from Dashboard
+  const displaySettings = (() => {
+    const saved = localStorage.getItem('resourceDisplaySettings');
+    return saved ? JSON.parse(saved) : null;
+  })();
+  
+  // Column configuration - apply display settings if available
   const [columns, setColumns] = useState(() => {
     const saved = localStorage.getItem('resourceColumns');
-    return saved ? JSON.parse(saved) : DEFAULT_COLUMNS;
+    if (saved) return JSON.parse(saved);
+    
+    // Apply display settings column widths if available
+    if (displaySettings?.columnWidths) {
+      return DEFAULT_COLUMNS.map(col => ({
+        ...col,
+        width: displaySettings.columnWidths[col.id] || col.width,
+        visible: col.id === 'select' || col.id === 'actions' || displaySettings.visibleColumns?.includes(col.id) || col.visible
+      }));
+    }
+    return DEFAULT_COLUMNS;
   });
   const [showColumnSettings, setShowColumnSettings] = useState(false);
+  const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   
   // Filtering and search - initialize from URL params
   const [searchTerm, setSearchTerm] = useState('');
@@ -53,47 +126,38 @@ function Resources() {
   const [regionFilter, setRegionFilter] = useState(searchParams.get('region') || 'all');
   const [accountFilter, setAccountFilter] = useState(searchParams.get('account') || 'all');
   const [environmentFilter, setEnvironmentFilter] = useState(searchParams.get('environment') || 'all');
+  const [categoryFilter, setCategoryFilter] = useState(searchParams.get('category') || displaySettings?.defaultCategory || 'all');
+  const [showLinked, setShowLinked] = useState(searchParams.get('linked') === 'true' || displaySettings?.showLinkedByDefault || false);
   
-  // Pagination
+  // Column resize state
+  const [resizingColumn, setResizingColumn] = useState(null);
+  const [resizeStartX, setResizeStartX] = useState(0);
+  const [resizeStartWidth, setResizeStartWidth] = useState(0);
+  
+  // Pagination - use display settings default
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(displaySettings?.defaultPageSize || 25);
   
   // Resource detail view
   const [detailResource, setDetailResource] = useState(null);
   const [showDetailPanel, setShowDetailPanel] = useState(false);
   
-  // Sorting
-  const [sortColumn, setSortColumn] = useState('name');
-  const [sortDirection, setSortDirection] = useState('asc');
+  // Sorting - use display settings defaults
+  const [sortColumn, setSortColumn] = useState(displaySettings?.defaultSortColumn || 'name');
+  const [sortDirection, setSortDirection] = useState(displaySettings?.defaultSortDirection || 'asc');
 
   useEffect(() => {
     fetchResources();
   }, []);
 
-  const getAuthHeader = () => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      navigate('/login');
-      return null;
-    }
-    return { Authorization: `Bearer ${token}` };
-  };
-
   const fetchResources = async () => {
-    const headers = getAuthHeader();
-    if (!headers) return;
-
     try {
-      // Fetch all resources by setting a high limit
-      const response = await axios.get(`${API_URL}/resources/?limit=10000`, { headers });
+      // Fetch all resources by setting a high limit - no auth required
+      const response = await axios.get(`${API_URL}/resources/?limit=10000`);
       setResources(response.data);
       setError('');
     } catch (err) {
-      if (err.response?.status === 401) {
-        navigate('/login');
-      } else {
-        setError(t('resourceError'));
-      }
+      setError(t('resourceError'));
     } finally {
       setLoading(false);
     }
@@ -225,14 +289,66 @@ function Resources() {
     localStorage.removeItem('resourceColumns');
   };
 
-  // Get unique values for filters
-  const uniqueTypes = [...new Set(resources.map(r => r.type))].sort();
-  const uniqueRegions = [...new Set(resources.map(r => r.region))].filter(Boolean).sort();
-  const uniqueAccounts = [...new Set(resources.map(r => r.account_id))].filter(Boolean).sort();
-  const uniqueEnvironments = [...new Set(resources.map(r => r.environment))].filter(Boolean).sort();
+  // Column resize handlers
+  const handleResizeStart = (e, columnId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const col = columns.find(c => c.id === columnId);
+    if (!col || !col.resizable) return;
+    
+    setResizingColumn(columnId);
+    setResizeStartX(e.clientX);
+    setResizeStartWidth(col.width);
+  };
+
+  const handleResizeMove = (e) => {
+    if (!resizingColumn) return;
+    
+    const col = columns.find(c => c.id === resizingColumn);
+    if (!col) return;
+    
+    const diff = e.clientX - resizeStartX;
+    const newWidth = Math.max(col.minWidth || 50, resizeStartWidth + diff);
+    
+    const newColumns = columns.map(c => 
+      c.id === resizingColumn ? { ...c, width: newWidth } : c
+    );
+    setColumns(newColumns);
+  };
+
+  const handleResizeEnd = () => {
+    if (resizingColumn) {
+      localStorage.setItem('resourceColumns', JSON.stringify(columns));
+      setResizingColumn(null);
+    }
+  };
+
+  // Add mouse event listeners for resize
+  useEffect(() => {
+    if (resizingColumn) {
+      document.addEventListener('mousemove', handleResizeMove);
+      document.addEventListener('mouseup', handleResizeEnd);
+      return () => {
+        document.removeEventListener('mousemove', handleResizeMove);
+        document.removeEventListener('mouseup', handleResizeEnd);
+      };
+    }
+  }, [resizingColumn, resizeStartX, resizeStartWidth]);
+
+  // Separate main resources from linked resources
+  const mainResources = resources.filter(r => !LINKED_RESOURCE_TYPES.has(r.type));
+  const linkedResources = resources.filter(r => LINKED_RESOURCE_TYPES.has(r.type));
+  
+  // Get unique values for filters (from main resources only for cleaner UI)
+  const uniqueTypes = [...new Set(mainResources.map(r => r.type))].sort();
+  const uniqueRegions = [...new Set(mainResources.map(r => r.region))].filter(Boolean).sort();
+  const uniqueAccounts = [...new Set(mainResources.map(r => r.account_id))].filter(Boolean).sort();
+  const uniqueEnvironments = [...new Set(mainResources.map(r => r.environment))].filter(Boolean).sort();
+  const uniqueCategories = Object.entries(RESOURCE_CATEGORIES).map(([key, val]) => ({ key, label: val.label }));
 
   // Filter resources
-  const filteredResources = resources.filter(resource => {
+  const baseResources = showLinked ? resources : mainResources;
+  const filteredResources = baseResources.filter(resource => {
     const matchesSearch = searchTerm === '' || 
       resource.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       resource.resource_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -242,8 +358,9 @@ function Resources() {
     const matchesRegion = regionFilter === 'all' || resource.region === regionFilter;
     const matchesAccount = accountFilter === 'all' || resource.account_id === accountFilter;
     const matchesEnvironment = environmentFilter === 'all' || resource.environment === environmentFilter;
+    const matchesCategory = categoryFilter === 'all' || getResourceCategory(resource.type) === categoryFilter;
     
-    return matchesSearch && matchesType && matchesRegion && matchesAccount && matchesEnvironment;
+    return matchesSearch && matchesType && matchesRegion && matchesAccount && matchesEnvironment && matchesCategory;
   });
   
   // Sort resources
@@ -300,7 +417,7 @@ function Resources() {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, typeFilter, regionFilter, accountFilter, environmentFilter, pageSize]);
+  }, [searchTerm, typeFilter, regionFilter, accountFilter, environmentFilter, categoryFilter, showLinked, pageSize]);
   
   // Clear all filters
   const clearFilters = () => {
@@ -309,11 +426,13 @@ function Resources() {
     setRegionFilter('all');
     setAccountFilter('all');
     setEnvironmentFilter('all');
+    setCategoryFilter('all');
+    setShowLinked(false);
     setSearchParams({});
   };
   
   // Check if any filter is active
-  const hasActiveFilters = searchTerm || typeFilter !== 'all' || regionFilter !== 'all' || accountFilter !== 'all' || environmentFilter !== 'all';
+  const hasActiveFilters = searchTerm || typeFilter !== 'all' || regionFilter !== 'all' || accountFilter !== 'all' || environmentFilter !== 'all' || categoryFilter !== 'all' || showLinked;
   
   // Pagination handlers
   const goToPage = (page) => {
@@ -405,6 +524,22 @@ function Resources() {
             {resource.status}
           </span>
         ) : <span className="text-gray-400">-</span>;
+      case 'category':
+        const category = getResourceCategory(resource.type);
+        const categoryColors = {
+          infrastructure: 'bg-blue-100 text-blue-800',
+          network: 'bg-green-100 text-green-800',
+          identity: 'bg-yellow-100 text-yellow-800',
+          devops: 'bg-purple-100 text-purple-800',
+          monitoring: 'bg-orange-100 text-orange-800',
+          storage: 'bg-pink-100 text-pink-800',
+          other: 'bg-gray-100 text-gray-800'
+        };
+        return (
+          <span className={`px-2 py-1 text-xs font-medium rounded ${categoryColors[category] || 'bg-gray-100 text-gray-800'}`}>
+            {RESOURCE_CATEGORIES[category]?.label || 'Other'}
+          </span>
+        );
       case 'environment':
         return resource.environment ? (
           <span className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded">
@@ -470,9 +605,20 @@ function Resources() {
             <div className="flex items-center gap-3">
               <Database className="w-6 h-6 text-indigo-600" />
               <h1 className="text-xl font-bold text-gray-900">Resources</h1>
-              <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
-                {filteredResources.length} of {resources.length}
+              <span className="px-2 py-1 text-xs bg-indigo-100 text-indigo-700 rounded-full font-medium">
+                {filteredResources.length} of {mainResources.length}
               </span>
+              {linkedResources.length > 0 && (
+                <button
+                  onClick={() => setShowLinked(!showLinked)}
+                  className={`px-2 py-1 text-xs rounded-full font-medium transition-colors ${
+                    showLinked ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                  title={showLinked ? 'Hide linked resources' : 'Show linked resources'}
+                >
+                  +{linkedResources.length} linked
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => navigate('/dashboard')} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded">
@@ -497,7 +643,8 @@ function Resources() {
 
       {/* Toolbar */}
       <div className="bg-white border-b px-4 py-3">
-        <div className="flex items-center justify-between gap-4">
+        {/* Row 1: Actions and Column Settings */}
+        <div className="flex items-center justify-between gap-4 mb-3">
           {/* Left: Actions */}
           <div className="flex items-center gap-2">
             <button
@@ -527,114 +674,239 @@ function Resources() {
             )}
           </div>
 
-          {/* Center: Search and Filters */}
-          <div className="flex items-center gap-3 flex-1 max-w-2xl">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by name, ID, or ARN..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-              {searchTerm && (
-                <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                  <X className="w-4 h-4 text-gray-400 hover:text-gray-600" />
-                </button>
+          {/* Right: Settings Buttons */}
+          <div className="flex items-center gap-2">
+            {/* Display Settings */}
+            <div className="relative">
+              <button
+                onClick={() => { setShowDisplaySettings(!showDisplaySettings); setShowColumnSettings(false); }}
+                className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-gray-50"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                Display
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              
+              {showDisplaySettings && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white border rounded-lg shadow-xl z-50 p-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="font-semibold text-sm">Display Settings</span>
+                    <button 
+                      onClick={() => {
+                        localStorage.removeItem('resourceDisplaySettings');
+                        setPageSize(25);
+                        setSortColumn('name');
+                        setSortDirection('asc');
+                        setShowLinked(false);
+                      }} 
+                      className="text-xs text-indigo-600 hover:underline"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Page Size */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Page Size</label>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => setPageSize(parseInt(e.target.value))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      >
+                        <option value={10}>10 per page</option>
+                        <option value={25}>25 per page</option>
+                        <option value={50}>50 per page</option>
+                        <option value={100}>100 per page</option>
+                      </select>
+                    </div>
+                    
+                    {/* Default Sort */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Sort By</label>
+                        <select
+                          value={sortColumn}
+                          onChange={(e) => setSortColumn(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        >
+                          <option value="name">Name</option>
+                          <option value="type">Type</option>
+                          <option value="region">Region</option>
+                          <option value="status">Status</option>
+                          <option value="created_at">Created</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Direction</label>
+                        <select
+                          value={sortDirection}
+                          onChange={(e) => setSortDirection(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        >
+                          <option value="asc">Ascending</option>
+                          <option value="desc">Descending</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    {/* Show Linked Toggle */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-700">Include Linked Resources</span>
+                      <button
+                        onClick={() => setShowLinked(!showLinked)}
+                        className={`w-10 h-6 rounded-full transition-colors ${showLinked ? 'bg-indigo-600' : 'bg-gray-300'}`}
+                      >
+                        <div className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform ${showLinked ? 'translate-x-5' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-4 pt-3 border-t">
+                    <button
+                      onClick={() => setShowDisplaySettings(false)}
+                      className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
             
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="all">All Types</option>
-              {uniqueTypes.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-            
-            <select
-              value={regionFilter}
-              onChange={(e) => setRegionFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="all">All Regions</option>
-              {uniqueRegions.map(region => (
-                <option key={region} value={region}>{region}</option>
-              ))}
-            </select>
-            
-            <select
-              value={accountFilter}
-              onChange={(e) => setAccountFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="all">All Accounts</option>
-              {uniqueAccounts.map(account => (
-                <option key={account} value={account}>{account}</option>
-              ))}
-            </select>
-            
-            <select
-              value={environmentFilter}
-              onChange={(e) => setEnvironmentFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="all">All Envs</option>
-              {uniqueEnvironments.map(env => (
-                <option key={env} value={env}>{env}</option>
-              ))}
-            </select>
-            
-            {hasActiveFilters && (
+            {/* Column Settings */}
+            <div className="relative">
               <button
-                onClick={clearFilters}
-                className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-1"
+                onClick={() => { setShowColumnSettings(!showColumnSettings); setShowDisplaySettings(false); }}
+                className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-gray-50"
               >
-                <X className="w-4 h-4" />
-                Clear
+                <Settings className="w-4 h-4" />
+                Columns
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              
+              {showColumnSettings && (
+                <div className="absolute right-0 top-full mt-2 w-72 bg-white border rounded-lg shadow-lg z-50 p-3">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-medium text-sm">Show Columns</span>
+                    <button onClick={resetColumns} className="text-xs text-indigo-600 hover:underline">
+                      Reset
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {columns.filter(col => col.id !== 'select' && col.id !== 'actions').map(col => (
+                      <div key={col.id} className="flex items-center justify-between">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={col.visible}
+                            onChange={() => toggleColumn(col.id)}
+                            className="rounded text-indigo-600"
+                          />
+                          {col.label}
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            value={col.width}
+                            onChange={(e) => updateColumnWidth(col.id, parseInt(e.target.value) || col.minWidth)}
+                            className="w-16 px-2 py-1 text-xs border rounded"
+                            min={col.minWidth}
+                            max={500}
+                          />
+                          <span className="text-xs text-gray-400">px</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* Row 2: Search and Filters */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by name, ID, or ARN..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                <X className="w-4 h-4 text-gray-400 hover:text-gray-600" />
               </button>
             )}
           </div>
-
-          {/* Right: Column Settings */}
-          <div className="relative">
+          
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Categories</option>
+            {uniqueCategories.map(cat => (
+              <option key={cat.key} value={cat.key}>{cat.label}</option>
+            ))}
+          </select>
+          
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Types</option>
+            {uniqueTypes.map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+          
+          <select
+            value={regionFilter}
+            onChange={(e) => setRegionFilter(e.target.value)}
+            className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Regions</option>
+            {uniqueRegions.map(region => (
+              <option key={region} value={region}>{region}</option>
+            ))}
+          </select>
+          
+          <select
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value)}
+            className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Accounts</option>
+            {uniqueAccounts.map(account => (
+              <option key={account} value={account}>{account}</option>
+            ))}
+          </select>
+          
+          <select
+            value={environmentFilter}
+            onChange={(e) => setEnvironmentFilter(e.target.value)}
+            className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Envs</option>
+            {uniqueEnvironments.map(env => (
+              <option key={env} value={env}>{env}</option>
+            ))}
+          </select>
+          
+          {hasActiveFilters && (
             <button
-              onClick={() => setShowColumnSettings(!showColumnSettings)}
-              className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-gray-50"
+              onClick={clearFilters}
+              className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-1"
             >
-              <Settings className="w-4 h-4" />
-              Columns
-              <ChevronDown className="w-4 h-4" />
+              <X className="w-4 h-4" />
+              Clear
             </button>
-            
-            {showColumnSettings && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-white border rounded-lg shadow-lg z-50 p-3">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="font-medium text-sm">Show Columns</span>
-                  <button onClick={resetColumns} className="text-xs text-indigo-600 hover:underline">
-                    Reset
-                  </button>
-                </div>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {columns.filter(col => col.id !== 'select' && col.id !== 'actions').map(col => (
-                    <label key={col.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={col.visible}
-                        onChange={() => toggleColumn(col.id)}
-                        className="rounded text-indigo-600"
-                      />
-                      {col.label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
 
@@ -683,7 +955,7 @@ function Resources() {
                     {visibleColumns.map(col => (
                       <th 
                         key={col.id} 
-                        style={{ width: col.width }}
+                        style={{ width: col.width, position: 'relative' }}
                         className={`px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${
                           col.sortable ? 'cursor-pointer hover:bg-gray-100 select-none' : ''
                         }`}
@@ -708,6 +980,16 @@ function Resources() {
                             {col.sortable && sortColumn !== col.id && (
                               <span className="text-gray-300">↕</span>
                             )}
+                          </div>
+                        )}
+                        {/* Column resize handle */}
+                        {col.resizable && (
+                          <div
+                            className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-indigo-400 group"
+                            onMouseDown={(e) => handleResizeStart(e, col.id)}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-300 group-hover:bg-indigo-500" />
                           </div>
                         )}
                       </th>
