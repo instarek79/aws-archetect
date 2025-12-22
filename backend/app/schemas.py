@@ -42,18 +42,20 @@ class TokenData(BaseModel):
 class ResourceBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     type: str = Field(..., min_length=1, max_length=100)
-    region: str = Field(..., min_length=1, max_length=100)
+    region: Optional[str] = Field(None, max_length=100)
     
     # AWS Identifiers
     arn: Optional[str] = None
-    account_id: Optional[str] = Field(None, max_length=12)
+    account_id: Optional[str] = None
     resource_id: Optional[str] = None
     
     # Resource Details
     status: Optional[str] = "unknown"
-    environment: Optional[str] = None  # dev, staging, prod, test
+    environment: Optional[str] = None
     cost_center: Optional[str] = None
     owner: Optional[str] = None
+    application: Optional[str] = None
+    project: Optional[str] = None
     
     # Connectivity & Networking
     vpc_id: Optional[str] = None
@@ -62,6 +64,8 @@ class ResourceBase(BaseModel):
     security_groups: Optional[List[str]] = []
     public_ip: Optional[str] = None
     private_ip: Optional[str] = None
+    dns_name: Optional[str] = None
+    endpoint: Optional[str] = None
     
     # Instance/Resource Configuration
     instance_type: Optional[str] = None
@@ -70,14 +74,31 @@ class ResourceBase(BaseModel):
     # Type-Specific Properties
     type_specific_properties: Optional[dict] = {}
     
-    # Relationships & Dependencies
+    # Relationships & Dependencies (Enhanced)
     dependencies: Optional[List[Any]] = []
     connected_resources: Optional[List[str]] = []
+    attached_to: Optional[str] = None
+    parent_resource: Optional[str] = None
+    child_resources: Optional[List[str]] = []
+    target_resources: Optional[List[str]] = []
+    source_resources: Optional[List[str]] = []
+    
+    # Security & Compliance
+    encryption_enabled: Optional[str] = None
+    public_access: Optional[str] = None
+    compliance_status: Optional[str] = None
+    
+    # Cost & Billing
+    monthly_cost_estimate: Optional[str] = None
+    last_cost_update: Optional[datetime] = None
     
     # Metadata
     tags: Optional[dict] = {}
     description: Optional[str] = None
     notes: Optional[str] = None
+    aws_service: Optional[str] = None
+    aws_resource_type: Optional[str] = None
+    last_reported_at: Optional[datetime] = None
 
 
 class ResourceCreate(ResourceBase):
@@ -87,7 +108,7 @@ class ResourceCreate(ResourceBase):
 class ResourceUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     type: Optional[str] = Field(None, min_length=1, max_length=100)
-    region: Optional[str] = Field(None, min_length=1, max_length=100)
+    region: Optional[str] = Field(None, max_length=100)
     
     # AWS Identifiers
     arn: Optional[str] = None
@@ -99,6 +120,8 @@ class ResourceUpdate(BaseModel):
     environment: Optional[str] = None
     cost_center: Optional[str] = None
     owner: Optional[str] = None
+    application: Optional[str] = None
+    project: Optional[str] = None
     
     # Connectivity & Networking
     vpc_id: Optional[str] = None
@@ -107,6 +130,8 @@ class ResourceUpdate(BaseModel):
     security_groups: Optional[List[str]] = None
     public_ip: Optional[str] = None
     private_ip: Optional[str] = None
+    dns_name: Optional[str] = None
+    endpoint: Optional[str] = None
     
     # Instance/Resource Configuration
     instance_type: Optional[str] = None
@@ -115,14 +140,31 @@ class ResourceUpdate(BaseModel):
     # Type-Specific Properties
     type_specific_properties: Optional[dict] = None
     
-    # Relationships & Dependencies
+    # Relationships & Dependencies (Enhanced)
     dependencies: Optional[List[Any]] = None
     connected_resources: Optional[List[str]] = None
+    attached_to: Optional[str] = None
+    parent_resource: Optional[str] = None
+    child_resources: Optional[List[str]] = None
+    target_resources: Optional[List[str]] = None
+    source_resources: Optional[List[str]] = None
+    
+    # Security & Compliance
+    encryption_enabled: Optional[str] = None
+    public_access: Optional[str] = None
+    compliance_status: Optional[str] = None
+    
+    # Cost & Billing
+    monthly_cost_estimate: Optional[str] = None
+    last_cost_update: Optional[datetime] = None
     
     # Metadata
     tags: Optional[dict] = None
     description: Optional[str] = None
     notes: Optional[str] = None
+    aws_service: Optional[str] = None
+    aws_resource_type: Optional[str] = None
+    last_reported_at: Optional[datetime] = None
 
 
 class ResourceResponse(ResourceBase):

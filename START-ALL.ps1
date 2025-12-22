@@ -3,8 +3,6 @@
 #  Starts: PostgreSQL (local), Backend (FastAPI), Frontend (React)
 # ============================================================================
 
-$ErrorActionPreference = "Stop"
-
 Write-Host ""
 Write-Host "================================================================================" -ForegroundColor Cyan
 Write-Host "                    AWS ARCHITECT - STARTING ALL SERVICES" -ForegroundColor Cyan
@@ -30,11 +28,11 @@ Write-Host "[1/3] Starting PostgreSQL (Docker)..." -ForegroundColor Green
 
 # Stop old containers
 Write-Host "  Stopping old containers..." -ForegroundColor Yellow
-$null = docker-compose down 2>&1
+try { docker-compose down 2>&1 | Out-Null } catch { }
 
 # Start PostgreSQL
 Write-Host "  Starting PostgreSQL container..." -ForegroundColor Yellow
-$null = docker-compose up -d 2>&1
+try { docker-compose up -d 2>&1 | Out-Null } catch { }
 
 # Wait for database to be healthy
 Write-Host "  Waiting for database to be ready..." -ForegroundColor Yellow

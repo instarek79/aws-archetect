@@ -23,6 +23,103 @@ class ARNParseResponse(BaseModel):
     message: str
 
 
+@router.get("/stats")
+def get_resource_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get resource statistics for dashboard"""
+    from sqlalchemy import func
+    
+    # Total count
+    total = db.query(func.count(Resource.id)).filter(
+        Resource.created_by == current_user.id
+    ).scalar()
+    
+    # Count by type
+    type_counts = db.query(
+        Resource.type, func.count(Resource.id)
+    ).filter(
+        Resource.created_by == current_user.id
+    ).group_by(Resource.type).all()
+    by_type = {t: c for t, c in type_counts}
+    
+    # Count by region
+    region_counts = db.query(
+        Resource.region, func.count(Resource.id)
+    ).filter(
+        Resource.created_by == current_user.id
+    ).group_by(Resource.region).all()
+    by_region = {r: c for r, c in region_counts}
+    
+    # Count by status
+    status_counts = db.query(
+        Resource.status, func.count(Resource.id)
+    ).filter(
+        Resource.created_by == current_user.id
+    ).group_by(Resource.status).all()
+    by_status = {s: c for s, c in status_counts}
+    
+    # Network resources (VPCs, Subnets, Security Groups)
+    vpc_count = db.query(func.count(func.distinct(Resource.vpc_id))).filter(
+        Resource.created_by == current_user.id,
+        Resource.vpc_id.isnot(None)
+    ).scalar()
+    
+    subnet_count = db.query(func.count(Resource.id)).filter(
+        Resource.created_by == current_user.id,
+        Resource.type == 'subnet'
+    ).scalar()
+    
+    security_group_count = db.query(func.count(Resource.id)).filter(
+        Resource.created_by == current_user.id,
+        Resource.type == 'security_group'
+    ).scalar()
+    
+    # Count unique availability zones
+    az_count = db.query(func.count(func.distinct(Resource.availability_zone))).filter(
+        Resource.created_by == current_user.id,
+        Resource.availability_zone.isnot(None)
+    ).scalar()
+    
+    # Count by account
+    account_counts = db.query(
+        Resource.account_id, func.count(Resource.id)
+    ).filter(
+        Resource.created_by == current_user.id,
+        Resource.account_id.isnot(None),
+        Resource.account_id != ''
+    ).group_by(Resource.account_id).all()
+    by_account = {a: c for a, c in account_counts if a}
+    
+    # Count by environment
+    env_counts = db.query(
+        Resource.environment, func.count(Resource.id)
+    ).filter(
+        Resource.created_by == current_user.id,
+        Resource.environment.isnot(None),
+        Resource.environment != ''
+    ).group_by(Resource.environment).all()
+    by_environment = {e: c for e, c in env_counts if e}
+    
+    return {
+        "total": total,
+        "by_type": by_type,
+        "by_region": by_region,
+        "by_status": by_status,
+        "by_account": by_account,
+        "by_environment": by_environment,
+        "network": {
+            "vpcs": vpc_count,
+            "subnets": subnet_count,
+            "security_groups": security_group_count,
+            "availability_zones": az_count
+        },
+        "type_count": len(by_type),
+        "region_count": len(by_region)
+    }
+
+
 @router.get("/", response_model=List[ResourceResponse])
 def get_resources(
     skip: int = 0,

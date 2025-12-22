@@ -77,17 +77,43 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
   }, [resource, mode, isOpen]);
 
   const resourceTypes = [
-    { value: 'ec2', label: t('ec2') },
-    { value: 's3', label: t('s3') },
-    { value: 'rds', label: t('rds') },
-    { value: 'lambda', label: t('lambda') },
-    { value: 'vpc', label: t('vpc') },
-    { value: 'elb', label: t('elb') },
-    { value: 'cloudfront', label: t('cloudfront') },
-    { value: 'route53', label: t('route53') },
-    { value: 'dynamodb', label: t('dynamodb') },
-    { value: 'sns', label: t('sns') },
-    { value: 'sqs', label: t('sqs') },
+    // Compute
+    { value: 'ec2', label: '🖥️ EC2 Instance' },
+    { value: 'lambda', label: '⚡ Lambda Function' },
+    { value: 'ecs', label: '🐳 ECS Container' },
+    { value: 'eks', label: '☸️ EKS Kubernetes' },
+    { value: 'fargate', label: '🚀 Fargate' },
+    // Storage
+    { value: 's3', label: '🪣 S3 Bucket' },
+    { value: 'ebs', label: '💾 EBS Volume' },
+    { value: 'efs', label: '📁 EFS File System' },
+    { value: 'fsx', label: '📂 FSx' },
+    // Database
+    { value: 'rds', label: '🗃️ RDS Database' },
+    { value: 'dynamodb', label: '📊 DynamoDB' },
+    { value: 'elasticache', label: '⚡ ElastiCache' },
+    { value: 'redshift', label: '📈 Redshift' },
+    // Networking
+    { value: 'vpc', label: '🌐 VPC' },
+    { value: 'subnet', label: '🔲 Subnet' },
+    { value: 'elb', label: '⚖️ Load Balancer' },
+    { value: 'cloudfront', label: '🌍 CloudFront' },
+    { value: 'route53', label: '🗺️ Route 53' },
+    { value: 'api_gateway', label: '🚪 API Gateway' },
+    { value: 'nat', label: '🔀 NAT Gateway' },
+    { value: 'igw', label: '🌉 Internet Gateway' },
+    { value: 'tgw', label: '🔗 Transit Gateway' },
+    // Messaging
+    { value: 'sns', label: '📨 SNS Topic' },
+    { value: 'sqs', label: '📬 SQS Queue' },
+    { value: 'kinesis', label: '🌊 Kinesis' },
+    // Security
+    { value: 'iam', label: '🔐 IAM' },
+    { value: 'kms', label: '🔑 KMS Key' },
+    { value: 'secrets_manager', label: '🔒 Secrets Manager' },
+    // Other
+    { value: 'cloudwatch', label: '📊 CloudWatch' },
+    { value: 'ecr', label: '📦 ECR Registry' },
   ];
 
   const regions = [

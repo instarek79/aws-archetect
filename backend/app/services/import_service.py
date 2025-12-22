@@ -41,6 +41,128 @@ except ImportError:
     logging.warning("⚠️  openai not installed - AI analysis features will be disabled")
 
 class ImportService:
+    # AWS Resource Explorer CSV column names
+    AWS_RESOURCE_EXPLORER_COLUMNS = [
+        'Identifier', 'ARN', 'Resource type', 'Region', 'AWS Account',
+        'Application', 'LastReportedAt', 'Service', 'Tags'
+    ]
+    
+    # Mapping from AWS Resource Explorer "Resource type" to our internal types
+    AWS_SERVICE_TYPE_MAP = {
+        # EC2
+        'ec2:instance': 'ec2',
+        'ec2:volume': 'ebs',
+        'ec2:security-group': 'security_group',
+        'ec2:security-group-rule': 'security_group_rule',
+        'ec2:vpc': 'vpc',
+        'ec2:subnet': 'subnet',
+        'ec2:network-interface': 'eni',
+        'ec2:elastic-ip': 'eip',
+        'ec2:nat-gateway': 'nat_gateway',
+        'ec2:internet-gateway': 'internet_gateway',
+        'ec2:route-table': 'route_table',
+        'ec2:network-acl': 'nacl',
+        'ec2:key-pair': 'key_pair',
+        'ec2:image': 'ami',
+        'ec2:snapshot': 'snapshot',
+        'ec2:launch-template': 'launch_template',
+        'ec2:vpc-endpoint': 'vpc_endpoint',
+        'ec2:transit-gateway': 'transit_gateway',
+        'ec2:transit-gateway-attachment': 'transit_gateway_attachment',
+        'ec2:vpc-peering-connection': 'vpc_peering',
+        'ec2:customer-gateway': 'customer_gateway',
+        'ec2:vpn-gateway': 'vpn_gateway',
+        'ec2:vpn-connection': 'vpn_connection',
+        'ec2:dhcp-options': 'dhcp_options',
+        'ec2:prefix-list': 'prefix_list',
+        'ec2:flow-log': 'flow_log',
+        # RDS
+        'rds:db': 'rds',
+        'rds:cluster': 'aurora',
+        'rds:snapshot': 'rds_snapshot',
+        'rds:db-snapshot': 'rds_snapshot',
+        'rds:cluster-snapshot': 'aurora_snapshot',
+        'rds:auto-backup': 'rds_backup',
+        'rds:pg': 'rds_parameter_group',
+        'rds:og': 'rds_option_group',
+        'rds:subgrp': 'db_subnet_group',
+        'rds:db-subnet-group': 'db_subnet_group',
+        'rds:cluster-pg': 'aurora_parameter_group',
+        'rds:secgrp': 'rds_security_group',
+        # S3
+        's3:bucket': 's3',
+        # Lambda
+        'lambda:function': 'lambda',
+        'lambda:layer': 'lambda_layer',
+        # ELB
+        'elasticloadbalancing:loadbalancer': 'elb',
+        'elasticloadbalancing:targetgroup': 'target_group',
+        'elasticloadbalancingv2:loadbalancer': 'elb',
+        'elasticloadbalancingv2:targetgroup': 'target_group',
+        # IAM
+        'iam:role': 'iam_role',
+        'iam:user': 'iam_user',
+        'iam:group': 'iam_group',
+        'iam:policy': 'iam_policy',
+        'iam:instance-profile': 'instance_profile',
+        # CloudFormation
+        'cloudformation:stack': 'cfn_stack',
+        # CloudWatch
+        'cloudwatch:alarm': 'cloudwatch_alarm',
+        'logs:log-group': 'log_group',
+        # Events
+        'events:event-bus': 'eventbridge',
+        'events:rule': 'eventbridge_rule',
+        # SNS/SQS
+        'sns:topic': 'sns',
+        'sqs:queue': 'sqs',
+        # DynamoDB
+        'dynamodb:table': 'dynamodb',
+        # ECS/EKS
+        'ecs:cluster': 'ecs_cluster',
+        'ecs:service': 'ecs_service',
+        'ecs:task-definition': 'ecs_task',
+        'eks:cluster': 'eks',
+        # ECR
+        'ecr:repository': 'ecr',
+        # Secrets Manager / KMS
+        'secretsmanager:secret': 'secrets_manager',
+        'kms:key': 'kms',
+        # API Gateway
+        'apigateway:restapi': 'api_gateway',
+        'apigateway:api': 'api_gateway',
+        # Athena
+        'athena:workgroup': 'athena',
+        # Glue
+        'glue:database': 'glue_database',
+        'glue:table': 'glue_table',
+        'glue:crawler': 'glue_crawler',
+        # CodePipeline / CodeBuild
+        'codepipeline:pipeline': 'codepipeline',
+        'codebuild:project': 'codebuild',
+        # Route53
+        'route53:hostedzone': 'route53',
+        # CloudFront
+        'cloudfront:distribution': 'cloudfront',
+        # ElastiCache
+        'elasticache:cluster': 'elasticache',
+        'elasticache:replicationgroup': 'elasticache',
+        # Kinesis
+        'kinesis:stream': 'kinesis',
+        # SSM
+        'ssm:parameter': 'ssm_parameter',
+        'ssm:document': 'ssm_document',
+        # ACM
+        'acm:certificate': 'acm_certificate',
+        # WAF
+        'wafv2:webacl': 'waf',
+        # Step Functions
+        'states:statemachine': 'step_function',
+        # Backup
+        'backup:backup-vault': 'backup_vault',
+        'backup:backup-plan': 'backup_plan',
+    }
+    
     def __init__(self):
         # Initialize LLM client - supports both Ollama (local) and OpenAI (cloud)
         if not OPENAI_AVAILABLE:
@@ -78,9 +200,167 @@ class ImportService:
             self.model = None
             print("WARNING: No LLM configured. AI features will be disabled.")
         
+        # Initialize schema definition
+        self._init_schema()
+        
+    def is_aws_resource_explorer_format(self, columns: List[str]) -> bool:
+        """
+        Detect if the CSV is from AWS Resource Explorer based on column names
+        """
+        required_cols = ['Identifier', 'ARN', 'Resource type', 'Region', 'AWS Account']
+        columns_lower = [c.lower().strip() for c in columns]
+        required_lower = [c.lower() for c in required_cols]
+        
+        matches = sum(1 for req in required_lower if req in columns_lower)
+        return matches >= 4  # At least 4 of 5 required columns
+    
+    def parse_aws_resource_explorer(self, data: List[Dict]) -> List[Dict]:
+        """
+        Parse AWS Resource Explorer CSV format and extract all possible information
+        """
+        resources = []
+        
+        for row in data:
+            try:
+                # Get basic fields
+                identifier = row.get('Identifier', '')
+                arn = row.get('ARN', '')
+                resource_type_raw = row.get('Resource type', '')
+                region = row.get('Region', 'unknown')
+                account_id = str(row.get('AWS Account', ''))
+                application = row.get('Application', '')
+                last_reported = row.get('LastReportedAt', '')
+                service = row.get('Service', '')
+                tag_count = row.get('Tags', 0)
+                
+                # Skip empty rows
+                if not identifier and not arn:
+                    continue
+                
+                # Map resource type
+                resource_type_lower = resource_type_raw.lower().strip() if resource_type_raw else ''
+                internal_type = self.AWS_SERVICE_TYPE_MAP.get(resource_type_lower, 'unknown')
+                
+                # If not in map, try to extract the resource type part (after the colon)
+                if internal_type == 'unknown' and ':' in resource_type_lower:
+                    # Extract the part after the colon and convert to snake_case
+                    resource_part = resource_type_lower.split(':')[1] if ':' in resource_type_lower else resource_type_lower
+                    internal_type = resource_part.replace('-', '_')
+                elif internal_type == 'unknown' and service:
+                    internal_type = service.lower()
+                
+                # Parse ARN for additional info
+                arn_parts = self._parse_arn(arn) if arn else {}
+                
+                # Extract all tags from Tag:* columns
+                tags = {}
+                for col_name, value in row.items():
+                    if col_name.startswith('Tag:') and value and value != '(not tagged)':
+                        tag_key = col_name[4:]  # Remove 'Tag:' prefix
+                        tags[tag_key] = str(value)
+                
+                # Build resource object
+                resource = {
+                    'name': identifier or arn_parts.get('resource_name', 'Unknown'),
+                    'type': internal_type,
+                    'arn': arn,
+                    'region': region if region and region != '-' else arn_parts.get('region', 'global'),
+                    'account_id': account_id or arn_parts.get('account_id', ''),
+                    'resource_id': arn_parts.get('resource_id', identifier),
+                    'status': 'active',  # Default - AWS Resource Explorer only shows active resources
+                    'tags': tags if tags else None,
+                    'aws_service': service if service else None,
+                    'aws_resource_type': resource_type_raw if resource_type_raw else None,
+                    'application': application if application and application != '-' else None,
+                    'type_specific_properties': {}
+                }
+                
+                # Extract environment from tags
+                env_tag = tags.get('Environment') or tags.get('Env.') or tags.get('env')
+                if env_tag:
+                    resource['environment'] = env_tag.lower()
+                
+                # Extract Name tag if different from identifier
+                name_tag = tags.get('Name')
+                if name_tag and name_tag != identifier:
+                    resource['name'] = name_tag
+                    resource['type_specific_properties']['identifier'] = identifier
+                
+                # Extract VPC info from tags or ARN
+                vpc_from_arn = self._extract_vpc_from_arn(arn)
+                if vpc_from_arn:
+                    resource['vpc_id'] = vpc_from_arn
+                
+                # Extract subnet from ARN for subnet resources
+                if internal_type == 'subnet':
+                    resource['subnet_id'] = identifier
+                
+                # Clean up empty type_specific_properties
+                if not resource['type_specific_properties']:
+                    resource['type_specific_properties'] = None
+                
+                resources.append(resource)
+                
+            except Exception as e:
+                print(f"WARNING: Failed to parse row: {e}")
+                continue
+        
+        return resources
+    
+    def _parse_arn(self, arn: str) -> Dict[str, str]:
+        """
+        Parse ARN to extract account_id, region, service, and resource info
+        ARN format: arn:partition:service:region:account-id:resource-type/resource-id
+        """
+        if not arn or not arn.startswith('arn:'):
+            return {}
+        
+        parts = arn.split(':')
+        if len(parts) < 6:
+            return {}
+        
+        result = {
+            'partition': parts[1],
+            'service': parts[2],
+            'region': parts[3] if parts[3] else 'global',
+            'account_id': parts[4],
+        }
+        
+        # Parse resource part (everything after account-id)
+        resource_part = ':'.join(parts[5:])
+        
+        # Handle different resource formats
+        if '/' in resource_part:
+            resource_type, resource_id = resource_part.split('/', 1)
+            result['resource_type'] = resource_type
+            result['resource_id'] = resource_id
+            result['resource_name'] = resource_id.split('/')[-1]
+        else:
+            result['resource_id'] = resource_part
+            result['resource_name'] = resource_part
+        
+        return result
+    
+    def _extract_vpc_from_arn(self, arn: str) -> Optional[str]:
+        """
+        Try to extract VPC ID from ARN if present
+        """
+        if not arn:
+            return None
+        
+        # Check for vpc in ARN
+        import re
+        vpc_match = re.search(r'vpc-[a-f0-9]+', arn)
+        if vpc_match:
+            return vpc_match.group(0)
+        
+        return None
+    
+    def _init_schema(self):
+        """Initialize schema definition - called from __init__"""
         # Define our database schema for LLM reference
         self.schema_definition = {
-            "required_fields": ["name", "type", "region"],
+            "required_fields": ["name", "type"],  # Only name and type are truly required
             "optional_fields": [
                 "account_id", "vpc_id", "subnet_id", "availability_zone",
                 "status", "environment", "instance_type", "public_ip", "private_ip",
@@ -88,18 +368,30 @@ class ImportService:
                 "resource_creation_date", "description", "notes", "tags",
                 "type_specific_properties"
             ],
-            "resource_types": ["ec2", "rds", "s3", "lambda", "elb", "vpc", "subnet", 
-                              "cloudfront", "route53", "dynamodb", "sns", "sqs"],
+            "resource_types": [
+                "ec2", "rds", "s3", "lambda", "elb", "vpc", "subnet",
+                "cloudfront", "route53", "dynamodb", "sns", "sqs",
+                "ebs", "efs", "fsx", "eip", "nat", "igw", "tgw",
+                "ecs", "eks", "ecr", "fargate",
+                "api_gateway", "cloudwatch", "iam", "kms", "secrets_manager",
+                "elasticache", "redshift", "aurora", "neptune",
+                "kinesis", "glue", "athena", "emr",
+                "unknown"  # Allow unknown types
+            ],
             "type_specific_properties": {
+                "ec2": ["ami_id", "os", "key_pair", "ebs_optimized", "detailed_monitoring"],
+                "ebs": ["volume_id", "size_gb", "volume_type", "iops", "throughput", 
+                       "encrypted", "snapshot_id", "attached_instance", "device_name"],
                 "rds": ["endpoint", "port", "engine", "engine_version", "db_instance_class", 
                        "storage_gb", "storage_type", "multi_az", "backup_retention_days", 
                        "encryption_enabled", "subnet_groups"],
                 "elb": ["dns_name", "lb_type", "scheme", "subnets", "target_groups", 
                        "listeners", "ssl_certificate_arn", "cross_zone_enabled"],
-                "ec2": ["ami_id", "os", "key_pair", "ebs_optimized", "detailed_monitoring"],
                 "lambda": ["runtime", "handler", "memory_mb", "timeout_seconds", "layers"],
                 "s3": ["bucket_name", "versioning_enabled", "encryption", "public_access", 
-                      "website_hosting", "lifecycle_rules"]
+                      "website_hosting", "lifecycle_rules"],
+                "efs": ["file_system_id", "performance_mode", "throughput_mode", "encrypted"],
+                "fsx": ["file_system_type", "storage_capacity_gb", "throughput_capacity"]
             }
         }
     
@@ -287,29 +579,73 @@ class ImportService:
                 sample = [{k: row.get(k) for k in limited_columns} for row in sample]
                 print(f"Limited sample to {len(limited_columns)} columns (from {len(all_columns)})")
         
-        # Send only essential schema to keep prompt small
+        # Send comprehensive schema with AWS-specific guidance
         essential_schema = {
-            "required_fields": ["name", "resource_type", "region"],
-            "optional_fields": ["account_id", "arn", "status", "cost_per_month", "tags"],
-            "resource_types": ["ec2", "rds", "s3", "lambda", "elb", "vpc"]
+            "required_fields": ["name", "type", "region"],
+            "core_fields": {
+                "name": "Resource name/identifier",
+                "type": "Resource type (ec2, rds, s3, ebs, lambda, etc)",
+                "region": "AWS region (us-east-1, eu-west-3, etc)",
+                "resource_id": "AWS resource ID (i-xxx, vol-xxx, etc)",
+                "arn": "Full AWS ARN",
+                "account_id": "AWS account number (12 digits)"
+            },
+            "network_fields": {
+                "vpc_id": "VPC ID (vpc-xxx)",
+                "subnet_id": "Subnet ID (subnet-xxx)",
+                "availability_zone": "AZ (us-east-1a, eu-west-3c, etc)",
+                "public_ip": "Public IP address",
+                "private_ip": "Private IP address",
+                "security_groups": "Security group IDs or names"
+            },
+            "metadata_fields": {
+                "status": "Resource status (running, stopped, available, etc)",
+                "environment": "Environment (production, staging, dev, etc)",
+                "instance_type": "Instance type (t2.micro, m5.large, etc)",
+                "tags": "AWS tags (JSON object or key=value pairs)",
+                "description": "Free-text description or notes"
+            }
         }
         
-        prompt = f"""
-Analyze this AWS resource data and suggest field mappings.
+        prompt = f"""Map CSV columns to database fields. Use EXACT field names from the list below.
 
-Sample (1 row):
+CSV DATA:
 {json.dumps(sample, indent=2)}
 
-Map to schema:
-{json.dumps(essential_schema, indent=2)}
+VALID FIELD NAMES (use these EXACTLY):
+name, type, region, resource_id, arn, account_id, status, environment
+vpc_id, subnet_id, availability_zone, instance_type
+public_ip, private_ip, security_groups
+tags, description, notes
 
-Respond with JSON:
+MAPPING RULES:
+- Instance Name/Name → "name"
+- Instance ID/Resource ID → "resource_id"  
+- Instance Type/Size → "instance_type"
+- OS/Operating System → "instance_type" (or skip if not relevant)
+- Public IP → "public_ip"
+- Private IP → "private_ip"
+- VPC/VPC ID → "vpc_id"
+- Subnet → "subnet_id"
+- AZ/Availability Zone → "availability_zone"
+- Tags → "tags"
+- State/Status → "status"
+- ARN → "arn"
+
+IMPORTANT:
+- Use field names EXACTLY as listed (e.g., "name" not "Resource name")
+- If column doesn't match any field, use null
+- Detect resource type: ec2, ebs, rds, s3, lambda, elb, vpc
+
+EXAMPLE:
+Input: {{"Server Name": "web-1", "Instance ID": "i-123", "IP": "1.2.3.4"}}
+Output: {{"Server Name": "name", "Instance ID": "resource_id", "IP": "public_ip"}}
+
+Return JSON:
 {{
-  "detected_resource_type": "ec2|rds|s3|lambda|elb|vpc",
-  "field_mappings": {{
-    "csv_column_name": "schema_field_name"
-  }},
-  "missing_required_fields": []
+  "detected_resource_type": "ec2",
+  "field_mappings": {{"CSV_Column": "exact_field_name"}},
+  "arn_column": null
 }}
 """
         
@@ -332,22 +668,63 @@ Respond with JSON:
             
             content = response.choices[0].message.content
             
+            # Log raw response for debugging
+            print(f"LLM RAW RESPONSE:\n{content}\n")
+            
             # Try to parse as JSON, extract JSON from markdown if needed
             try:
                 analysis = json.loads(content)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                print(f"Initial JSON parse failed: {e}")
                 # Try to extract JSON from markdown code blocks
                 import re
                 json_match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
                 if json_match:
-                    analysis = json.loads(json_match.group(1))
+                    json_str = json_match.group(1)
+                    print(f"Extracted from markdown: {json_str}")
+                    try:
+                        analysis = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        # Try to fix common JSON issues
+                        json_str = json_str.replace("'", '"')  # Single to double quotes
+                        json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                        json_str = re.sub(r',\s*]', ']', json_str)
+                        analysis = json.loads(json_str)
                 else:
                     # Try to find JSON anywhere in the response
-                    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
                     if json_match:
-                        analysis = json.loads(json_match.group(0))
+                        json_str = json_match.group(0)
+                        print(f"Extracted JSON: {json_str}")
+                        # Clean up common issues
+                        json_str = json_str.replace("'", '"')
+                        json_str = re.sub(r',\s*}', '}', json_str)
+                        json_str = re.sub(r',\s*]', ']', json_str)
+                        analysis = json.loads(json_str)
                     else:
-                        raise ValueError("Could not parse JSON from LLM response")
+                        raise ValueError(f"Could not parse JSON from LLM response. Raw: {content[:200]}")
+            
+            # Clean up the analysis - remove null/invalid mappings
+            field_mappings = analysis.get("field_mappings", {})
+            cleaned_mappings = {}
+            
+            valid_fields = {
+                'name', 'type', 'region', 'resource_id', 'arn', 'account_id',
+                'status', 'environment', 'vpc_id', 'subnet_id', 'availability_zone',
+                'instance_type', 'public_ip', 'private_ip', 'security_groups',
+                'tags', 'description', 'notes'
+            }
+            
+            for csv_col, target_field in field_mappings.items():
+                # Skip if target is null, "null", None, or not a valid field
+                if target_field and str(target_field).lower() != "null" and target_field in valid_fields:
+                    cleaned_mappings[csv_col] = target_field
+                else:
+                    print(f"Skipping invalid mapping: {csv_col} → {target_field}")
+            
+            analysis["field_mappings"] = cleaned_mappings
+            
+            print(f"Cleaned mappings: {len(cleaned_mappings)} valid out of {len(field_mappings)} total")
             
             return {
                 "success": True,
@@ -455,11 +832,12 @@ Respond with JSON:
             if not resource.get('type'):
                 errors.append("Missing required field: type")
             if not resource.get('region'):
-                warnings.append("Missing region field")
+                warnings.append("Missing region field (will be auto-filled)")
             
-            # Validate resource type
+            # Validate resource type (just warn, don't fail)
             if resource.get('type') and resource['type'] not in self.schema_definition['resource_types']:
-                warnings.append(f"Unknown resource type: {resource['type']}")
+                # Don't treat as error, just add to type_specific_properties
+                warnings.append(f"Non-standard resource type: {resource['type']} (will be imported as-is)")
             
             if errors:
                 invalid_resources.append({

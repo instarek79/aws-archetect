@@ -25,6 +25,11 @@ function ArchitectureDiagram() {
   const [selectedVPC, setSelectedVPC] = useState('all');
   const [accounts, setAccounts] = useState([]);
   const [vpcs, setVPCs] = useState([]);
+  
+  // View modes
+  const [showConnections, setShowConnections] = useState(true);
+  const [viewMode, setViewMode] = useState('hierarchy'); // 'hierarchy', 'network', 'flat'
+  const [connectionType, setConnectionType] = useState('all'); // 'all', 'vpc', 'dependencies', 'attached'
 
   useEffect(() => {
     fetchResources();
@@ -38,7 +43,7 @@ function ArchitectureDiagram() {
     if (filteredResources.length > 0) {
       drawDiagram();
     }
-  }, [filteredResources, zoom, pan, selectedNode]);
+  }, [filteredResources, zoom, pan, selectedNode, showConnections, connectionType]);
 
   const fetchResources = async () => {
     try {
@@ -270,6 +275,9 @@ function ArchitectureDiagram() {
       });
     }
 
+    // Draw connection lines between resources
+    drawConnections(ctx);
+
     ctx.restore();
   };
 
@@ -377,6 +385,202 @@ function ArchitectureDiagram() {
     
     // Store click area
     resource._clickArea = { x, y, width, height };
+  };
+
+  // Draw connection lines between resources
+  const drawConnections = (ctx) => {
+    if (!showConnections) return;
+    
+    // Build a map of resource positions by multiple identifiers
+    const resourcePositions = {};
+    filteredResources.forEach(r => {
+      if (r._clickArea) {
+        const pos = {
+          x: r._clickArea.x + r._clickArea.width / 2,
+          y: r._clickArea.y + r._clickArea.height / 2,
+          resource: r
+        };
+        // Map by multiple identifiers for flexible matching
+        if (r.resource_id) resourcePositions[r.resource_id] = pos;
+        if (r.name) resourcePositions[r.name] = pos;
+        if (r.arn) resourcePositions[r.arn] = pos;
+        if (r.id) resourcePositions[`id:${r.id}`] = pos;
+      }
+    });
+    
+    // Helper to find target position
+    const findTarget = (id) => {
+      if (!id) return null;
+      return resourcePositions[id] || resourcePositions[`id:${id}`];
+    };
+    
+    // Draw connections
+    filteredResources.forEach(resource => {
+      if (!resource._clickArea) return;
+      
+      const sourceX = resource._clickArea.x + resource._clickArea.width / 2;
+      const sourceY = resource._clickArea.y + resource._clickArea.height / 2;
+      
+      // Draw VPC connections (resources in same VPC)
+      if ((connectionType === 'all' || connectionType === 'vpc') && resource.vpc_id) {
+        const sameVpcResources = filteredResources.filter(r => 
+          r.id !== resource.id && 
+          r.vpc_id === resource.vpc_id && 
+          r._clickArea
+        );
+        
+        sameVpcResources.forEach(target => {
+          const targetX = target._clickArea.x + target._clickArea.width / 2;
+          const targetY = target._clickArea.y + target._clickArea.height / 2;
+          
+          // Only draw if resources are different types (to avoid clutter)
+          if (resource.type !== target.type) {
+            drawConnectionLine(ctx, sourceX, sourceY, targetX, targetY, '#3B82F633', 1, 'vpc');
+          }
+        });
+      }
+      
+      // Draw dependency connections
+      if ((connectionType === 'all' || connectionType === 'dependencies')) {
+        const deps = Array.isArray(resource.dependencies) ? resource.dependencies : [];
+        deps.forEach(depId => {
+          const target = findTarget(depId);
+          if (target) {
+            drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#EF4444', 2, 'dependency');
+          }
+        });
+      }
+      
+      // Draw connected_resources connections
+      if ((connectionType === 'all' || connectionType === 'dependencies')) {
+        const connected = Array.isArray(resource.connected_resources) ? resource.connected_resources : [];
+        connected.forEach(connId => {
+          const target = findTarget(connId);
+          if (target) {
+            drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#10B981', 2, 'connected');
+          }
+        });
+      }
+      
+      // Draw attached_to connections (new field)
+      if ((connectionType === 'all' || connectionType === 'attached') && resource.attached_to) {
+        const target = findTarget(resource.attached_to);
+        if (target) {
+          drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#F59E0B', 2, 'attached');
+        }
+      }
+      
+      // Draw parent_resource connections (hierarchical)
+      if ((connectionType === 'all' || connectionType === 'attached') && resource.parent_resource) {
+        const target = findTarget(resource.parent_resource);
+        if (target) {
+          drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#6366F1', 1.5, 'parent');
+        }
+      }
+      
+      // Draw target_resources connections (ELB targets, etc.)
+      if ((connectionType === 'all' || connectionType === 'attached')) {
+        const targets = Array.isArray(resource.target_resources) ? resource.target_resources : [];
+        targets.forEach(targetId => {
+          const target = findTarget(targetId);
+          if (target) {
+            drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#8B5CF6', 2, 'loadbalancer');
+          }
+        });
+      }
+      
+      // Draw source_resources connections (resources connecting TO this)
+      if ((connectionType === 'all' || connectionType === 'dependencies')) {
+        const sources = Array.isArray(resource.source_resources) ? resource.source_resources : [];
+        sources.forEach(sourceId => {
+          const srcPos = findTarget(sourceId);
+          if (srcPos) {
+            drawConnectionLine(ctx, srcPos.x, srcPos.y, sourceX, sourceY, '#EC4899', 2, 'source');
+          }
+        });
+      }
+      
+      // Legacy: Draw from type_specific_properties (backward compatibility)
+      if ((connectionType === 'all' || connectionType === 'attached')) {
+        const attachedTo = resource.type_specific_properties?.attached_instance || 
+                          resource.type_specific_properties?.attached_to;
+        if (attachedTo && !resource.attached_to) {
+          const target = findTarget(attachedTo);
+          if (target) {
+            drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#F59E0B', 2, 'attached');
+          }
+        }
+        
+        // ELB to target instances from type_specific_properties
+        const targetGroups = resource.type_specific_properties?.target_instances ||
+                            resource.type_specific_properties?.targets;
+        if (targetGroups && Array.isArray(targetGroups) && (!resource.target_resources || resource.target_resources.length === 0)) {
+          targetGroups.forEach(targetId => {
+            const target = findTarget(targetId);
+            if (target) {
+              drawConnectionLine(ctx, sourceX, sourceY, target.x, target.y, '#8B5CF6', 2, 'loadbalancer');
+            }
+          });
+        }
+      }
+    });
+  };
+  
+  // Draw a single connection line with arrow
+  const drawConnectionLine = (ctx, x1, y1, x2, y2, color, width, type) => {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    
+    // Different line styles for different connection types
+    if (type === 'vpc') {
+      ctx.setLineDash([5, 5]);
+    } else if (type === 'dependency') {
+      ctx.setLineDash([10, 5]);
+    } else {
+      ctx.setLineDash([]);
+    }
+    
+    // Draw curved line
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    
+    // Calculate control points for bezier curve
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    // Curve offset based on distance
+    const curveOffset = Math.min(50, dist * 0.2);
+    const perpX = -dy / dist * curveOffset;
+    const perpY = dx / dist * curveOffset;
+    
+    ctx.quadraticCurveTo(midX + perpX, midY + perpY, x2, y2);
+    ctx.stroke();
+    
+    // Draw arrow at end
+    if (type !== 'vpc') {
+      const angle = Math.atan2(y2 - (midY + perpY), x2 - (midX + perpX));
+      const arrowSize = 8;
+      
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(
+        x2 - arrowSize * Math.cos(angle - Math.PI / 6),
+        y2 - arrowSize * Math.sin(angle - Math.PI / 6)
+      );
+      ctx.lineTo(
+        x2 - arrowSize * Math.cos(angle + Math.PI / 6),
+        y2 - arrowSize * Math.sin(angle + Math.PI / 6)
+      );
+      ctx.closePath();
+      ctx.fill();
+    }
+    
+    ctx.restore();
   };
 
   const roundRect = (ctx, x, y, width, height, radius, fill, stroke) => {
@@ -655,7 +859,69 @@ function ArchitectureDiagram() {
               Clear Filters
             </button>
           )}
+          
+          {/* Separator */}
+          <div className="h-6 w-px bg-gray-300 mx-2"></div>
+          
+          {/* Connection Controls */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showConnections}
+              onChange={(e) => setShowConnections(e.target.checked)}
+              className="w-4 h-4 text-indigo-600 rounded"
+            />
+            <span className="text-sm text-gray-700">Show Connections</span>
+          </label>
+          
+          {showConnections && (
+            <select
+              value={connectionType}
+              onChange={(e) => setConnectionType(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">All Connections</option>
+              <option value="vpc">VPC Only</option>
+              <option value="dependencies">Dependencies</option>
+              <option value="attached">Attached Resources</option>
+            </select>
+          )}
         </div>
+        
+        {/* Connection Legend */}
+        {showConnections && (
+          <div className="mt-3 flex items-center gap-6 text-xs">
+            <span className="text-gray-500 font-medium">Connection Types:</span>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-blue-300" style={{borderStyle: 'dashed'}}></div>
+              <span className="text-gray-600">Same VPC</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-red-500"></div>
+              <span className="text-gray-600">Dependency</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-green-500"></div>
+              <span className="text-gray-600">Connected</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-yellow-500"></div>
+              <span className="text-gray-600">Attached</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-purple-500"></div>
+              <span className="text-gray-600">Target/LB</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-indigo-500"></div>
+              <span className="text-gray-600">Parent</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-0.5 bg-pink-500"></div>
+              <span className="text-gray-600">Source</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Diagram Area */}

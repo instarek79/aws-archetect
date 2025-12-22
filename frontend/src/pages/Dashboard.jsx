@@ -82,29 +82,29 @@ function Dashboard() {
     if (!token) return;
 
     try {
-      const response = await axios.get(`${API_URL}/resources/`, {
+      // Fetch stats from dedicated endpoint for accurate counts
+      const statsResponse = await axios.get(`${API_URL}/resources/stats`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const data = response.data;
-      setResources(data);
-
-      // Calculate stats
-      const byType = {};
-      const byRegion = {};
-      const byStatus = {};
-
-      data.forEach(resource => {
-        byType[resource.type] = (byType[resource.type] || 0) + 1;
-        byRegion[resource.region] = (byRegion[resource.region] || 0) + 1;
-        byStatus[resource.status] = (byStatus[resource.status] || 0) + 1;
-      });
-
+      const statsData = statsResponse.data;
+      
       setStats({
-        total: data.length,
-        byType,
-        byRegion,
-        byStatus
+        total: statsData.total,
+        byType: statsData.by_type,
+        byRegion: statsData.by_region,
+        byStatus: statsData.by_status,
+        byAccount: statsData.by_account || {},
+        byEnvironment: statsData.by_environment || {},
+        network: statsData.network,
+        typeCount: statsData.type_count,
+        regionCount: statsData.region_count
       });
+      
+      // Fetch recent resources for display (limited)
+      const response = await axios.get(`${API_URL}/resources/?limit=100`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setResources(response.data);
     } catch (error) {
       console.error('Failed to fetch resources', error);
     }
@@ -233,7 +233,7 @@ function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Active</p>
-                <p className="text-3xl font-bold text-gray-900">{stats.byStatus['running'] || 0}</p>
+                <p className="text-3xl font-bold text-gray-900">{stats.byStatus?.['active'] || stats.byStatus?.['running'] || 0}</p>
               </div>
               <Activity className="w-10 h-10 text-emerald-600" />
             </div>
@@ -248,7 +248,11 @@ function Dashboard() {
             {Object.keys(stats.byType).length > 0 ? (
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {Object.entries(stats.byType).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
-                  <div key={type} className="flex items-center justify-between">
+                  <div 
+                    key={type} 
+                    className="flex items-center justify-between cursor-pointer hover:bg-indigo-50 p-1 rounded transition-colors"
+                    onClick={() => navigate(`/resources?type=${encodeURIComponent(type)}`)}
+                  >
                     <span className="text-gray-700 uppercase">{type}</span>
                     <span className="px-2 py-1 bg-indigo-100 text-indigo-800 rounded font-semibold text-sm">{count}</span>
                   </div>
@@ -265,7 +269,11 @@ function Dashboard() {
             {Object.keys(stats.byRegion).length > 0 ? (
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {Object.entries(stats.byRegion).sort((a, b) => b[1] - a[1]).map(([region, count]) => (
-                  <div key={region} className="flex items-center justify-between">
+                  <div 
+                    key={region} 
+                    className="flex items-center justify-between cursor-pointer hover:bg-blue-50 p-1 rounded transition-colors"
+                    onClick={() => navigate(`/resources?region=${encodeURIComponent(region)}`)}
+                  >
                     <span className="text-gray-700">{region}</span>
                     <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded font-semibold text-sm">{count}</span>
                   </div>
@@ -279,30 +287,30 @@ function Dashboard() {
           {/* VPCs and Network */}
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold mb-4">Network Resources</h3>
-            {resources.length > 0 ? (
+            {stats.network ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-gray-700">VPCs</span>
                   <span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-sm">
-                    {new Set(resources.map(r => r.vpc_id).filter(v => v)).size}
+                    {stats.network.vpcs || 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-700">Subnets</span>
                   <span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-sm">
-                    {new Set(resources.map(r => r.subnet_id).filter(s => s)).size}
+                    {stats.network.subnets || 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-700">Security Groups</span>
                   <span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-sm">
-                    {new Set(resources.flatMap(r => r.security_groups || [])).size}
+                    {stats.network.security_groups || 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-700">Availability Zones</span>
                   <span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold text-sm">
-                    {new Set(resources.map(r => r.availability_zone).filter(a => a)).size}
+                    {stats.network.availability_zones || 0}
                   </span>
                 </div>
               </div>
@@ -317,13 +325,17 @@ function Dashboard() {
           {/* Accounts */}
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold mb-4">AWS Accounts</h3>
-            {resources.length > 0 ? (
-              <div className="space-y-2">
-                {Array.from(new Set(resources.map(r => r.account_id).filter(a => a))).map(account => (
-                  <div key={account} className="flex items-center justify-between">
+            {stats.byAccount && Object.keys(stats.byAccount).length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {Object.entries(stats.byAccount).sort((a, b) => b[1] - a[1]).map(([account, count]) => (
+                  <div 
+                    key={account} 
+                    className="flex items-center justify-between cursor-pointer hover:bg-purple-50 p-1 rounded transition-colors"
+                    onClick={() => navigate(`/resources?account=${encodeURIComponent(account)}`)}
+                  >
                     <span className="text-gray-700 font-mono text-sm">{account}</span>
                     <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded font-semibold text-sm">
-                      {resources.filter(r => r.account_id === account).length} resources
+                      {count} resources
                     </span>
                   </div>
                 ))}
@@ -336,13 +348,17 @@ function Dashboard() {
           {/* Environments */}
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold mb-4">Environments</h3>
-            {resources.length > 0 ? (
-              <div className="space-y-2">
-                {Array.from(new Set(resources.map(r => r.environment).filter(e => e))).map(env => (
-                  <div key={env} className="flex items-center justify-between">
+            {stats.byEnvironment && Object.keys(stats.byEnvironment).length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {Object.entries(stats.byEnvironment).sort((a, b) => b[1] - a[1]).map(([env, count]) => (
+                  <div 
+                    key={env} 
+                    className="flex items-center justify-between cursor-pointer hover:bg-orange-50 p-1 rounded transition-colors"
+                    onClick={() => navigate(`/resources?environment=${encodeURIComponent(env)}`)}
+                  >
                     <span className="text-gray-700 capitalize">{env}</span>
                     <span className="px-2 py-1 bg-orange-100 text-orange-800 rounded font-semibold text-sm">
-                      {resources.filter(r => r.environment === env).length} resources
+                      {count} resources
                     </span>
                   </div>
                 ))}
