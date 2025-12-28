@@ -188,6 +188,54 @@ class RelationshipExtractor:
         return relationships
     
     @staticmethod
+    def get_relationship_metadata(rel_type: str, source_type: str, target_type: str) -> dict:
+        """
+        Get metadata for a relationship based on type and resource types.
+        Returns: dict with port, protocol, direction, label
+        """
+        metadata = {
+            'port': None,
+            'protocol': None,
+            'direction': 'outbound',
+            'label': None,
+            'status': 'active'
+        }
+        
+        # Define common ports and protocols
+        if rel_type == 'uses':
+            if 'rds' in target_type or 'aurora' in target_type:
+                metadata['port'] = 3306  # MySQL/Aurora default
+                metadata['protocol'] = 'TCP'
+                metadata['label'] = 'DB Connection'
+            elif 'dynamodb' in target_type:
+                metadata['port'] = 443
+                metadata['protocol'] = 'HTTPS'
+                metadata['label'] = 'API Call'
+            elif 's3' in target_type:
+                metadata['port'] = 443
+                metadata['protocol'] = 'HTTPS'
+                metadata['label'] = 'S3 Access'
+        
+        elif rel_type == 'routes_to':
+            if 'elb' in source_type or 'alb' in source_type:
+                metadata['port'] = 80
+                metadata['protocol'] = 'HTTP'
+                metadata['label'] = 'Load Balancer'
+                metadata['direction'] = 'bidirectional'
+        
+        elif rel_type == 'applies_to':
+            metadata['label'] = 'Security Rule'
+            metadata['direction'] = 'inbound'
+        
+        elif rel_type == 'triggers':
+            metadata['label'] = 'Event Trigger'
+        
+        elif rel_type == 'depends_on':
+            metadata['label'] = 'Dependency'
+        
+        return metadata
+    
+    @staticmethod
     def extract_all_relationships(db: Session) -> int:
         """
         Extract all relationships and save to database.
@@ -208,17 +256,36 @@ class RelationshipExtractor:
         existing = db.query(ResourceRelationship).all()
         existing_set = {(r.source_resource_id, r.target_resource_id) for r in existing}
         
-        # Create new relationships
+        # Create new relationships with metadata
         created_count = 0
         for source_id, target_id, rel_type in unique_relationships:
             if (source_id, target_id) not in existing_set:
-                relationship = ResourceRelationship(
-                    source_resource_id=source_id,
-                    target_resource_id=target_id,
-                    relationship_type=rel_type
-                )
-                db.add(relationship)
-                created_count += 1
+                # Get source and target resources to determine metadata
+                source_res = db.query(Resource).filter(Resource.id == source_id).first()
+                target_res = db.query(Resource).filter(Resource.id == target_id).first()
+                
+                if source_res and target_res:
+                    # Get relationship metadata
+                    metadata = RelationshipExtractor.get_relationship_metadata(
+                        rel_type,
+                        source_res.type.lower() if source_res.type else '',
+                        target_res.type.lower() if target_res.type else ''
+                    )
+                    
+                    relationship = ResourceRelationship(
+                        source_resource_id=source_id,
+                        target_resource_id=target_id,
+                        relationship_type=rel_type,
+                        port=metadata.get('port'),
+                        protocol=metadata.get('protocol'),
+                        direction=metadata.get('direction'),
+                        label=metadata.get('label'),
+                        status=metadata.get('status', 'active'),
+                        auto_detected='yes',
+                        confidence='high'
+                    )
+                    db.add(relationship)
+                    created_count += 1
         
         db.commit()
         return created_count

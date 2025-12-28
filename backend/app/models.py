@@ -121,13 +121,23 @@ class ResourceRelationship(Base):
     # Relationship type: uses, consumes, applies_to, attached_to, depends_on, connects_to, etc.
     relationship_type = Column(String, nullable=False, default="uses", index=True)
     
-    # Additional metadata
+    # Additional metadata for clear identification
     description = Column(Text)  # Human-readable description of the relationship
     auto_detected = Column(String, default="yes")  # yes/no - was this auto-detected or manually added?
     confidence = Column(String)  # high/medium/low - confidence in auto-detection
     
+    # Connection details for network relationships
+    port = Column(Integer)  # Port number (e.g., 80, 443, 3306)
+    protocol = Column(String)  # Protocol (TCP, UDP, HTTP, HTTPS, etc.)
+    direction = Column(String)  # inbound/outbound/bidirectional
+    
+    # Relationship status and metadata
+    status = Column(String, default="active")  # active/inactive/deprecated
+    label = Column(String)  # Short label for diagram display
+    flow_order = Column(Integer)  # Order in data flow (1, 2, 3...)
+    
     # Relationship properties (JSON for flexible data)
-    properties = Column(JSON, default=dict)  # Port numbers, protocols, etc.
+    properties = Column(JSON, default=dict)  # Additional properties like bandwidth, latency, etc.
     
     # Audit
     created_at = Column(DateTime(timezone=True), server_default=func.now())

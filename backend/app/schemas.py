@@ -212,17 +212,39 @@ class ResourceRelationshipBase(BaseModel):
     target_resource_id: int
     relationship_type: str = "uses"  # uses, consumes, applies_to, attached_to, depends_on, connects_to
     description: Optional[str] = None
+    
+    # Connection details
+    port: Optional[int] = None
+    protocol: Optional[str] = None
+    direction: Optional[str] = None  # inbound/outbound/bidirectional
+    
+    # Relationship metadata
+    status: Optional[str] = "active"  # active/inactive/deprecated
+    label: Optional[str] = None  # Short label for diagram
+    flow_order: Optional[int] = None  # Order in data flow
+    
     properties: Optional[dict] = None
 
 
 class ResourceRelationshipCreate(ResourceRelationshipBase):
     auto_detected: str = "no"  # Manual creation defaults to "no"
-    confidence: Optional[str] = None
+    confidence: Optional[str] = None  # high/medium/low
 
 
 class ResourceRelationshipUpdate(BaseModel):
     relationship_type: Optional[str] = None
     description: Optional[str] = None
+    
+    # Connection details
+    port: Optional[int] = None
+    protocol: Optional[str] = None
+    direction: Optional[str] = None
+    
+    # Relationship metadata
+    status: Optional[str] = None
+    label: Optional[str] = None
+    flow_order: Optional[int] = None
+    
     properties: Optional[dict] = None
 
 
@@ -230,6 +252,12 @@ class ResourceRelationshipResponse(ResourceRelationshipBase):
     id: int
     auto_detected: str
     confidence: Optional[str]
+    port: Optional[int]
+    protocol: Optional[str]
+    direction: Optional[str]
+    status: Optional[str]
+    label: Optional[str]
+    flow_order: Optional[int]
     created_at: datetime
     updated_at: Optional[datetime]
     
