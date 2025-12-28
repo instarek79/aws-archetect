@@ -76,7 +76,7 @@ function AIInsights() {
     setSummary(null);
 
     try {
-      const response = await axios.get(`${API_URL}/ai/summary`, { headers });
+      const response = await axios.get(`${API_URL}/api/ai/summary`, { headers });
       setSummary(response.data);
       setSuccessMessage(t('summaryGenerated'));
       setTimeout(() => setSuccessMessage(''), 3000);

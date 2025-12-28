@@ -42,8 +42,8 @@ function Login() {
     console.log('Form Data:', { email: formData.email, password: '***' });
 
     try {
-      console.log('Sending POST request to:', `${API_URL}/auth/login`);
-      const response = await axios.post(`${API_URL}/auth/login`, formData);
+      console.log('Sending POST request to:', `${API_URL}/api/auth/login`);
+      const response = await axios.post(`${API_URL}/api/auth/login`, formData);
       
       console.log('Login response received:', response.status);
       console.log('Response data:', { 

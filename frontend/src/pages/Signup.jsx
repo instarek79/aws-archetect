@@ -53,14 +53,14 @@ function Signup() {
     setLoading(true);
 
     try {
-      await axios.post(`${API_URL}/auth/register`, {
+      await axios.post(`${API_URL}/api/auth/register`, {
         email: formData.email,
         username: formData.username,
         password: formData.password
       });
       
       // Automatically log in after registration
-      const loginResponse = await axios.post(`${API_URL}/auth/login`, {
+      const loginResponse = await axios.post(`${API_URL}/api/auth/login`, {
         email: formData.email,
         password: formData.password
       });

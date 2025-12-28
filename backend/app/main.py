@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.database import engine, Base
-from app.routers import auth, resources, ai, import_router
+from app.routers import auth, resources, ai, import_router, relationships
 import logging
 
 # Configure logging
@@ -33,11 +33,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth.router)
-app.include_router(resources.router)
-app.include_router(ai.router)
-app.include_router(import_router.router)
+# Include routers with /api prefix
+app.include_router(auth.router, prefix="/api")
+app.include_router(resources.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
+app.include_router(import_router.router, prefix="/api")
+app.include_router(relationships.router, prefix="/api")
 
 
 @app.get("/health")

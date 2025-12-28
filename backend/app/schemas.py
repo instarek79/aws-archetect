@@ -204,3 +204,42 @@ class ArchitectureSummary(BaseModel):
     cost_optimization_tips: List[str]
     security_recommendations: List[str]
     best_practices: List[str]
+
+
+# Resource Relationship Schemas
+class ResourceRelationshipBase(BaseModel):
+    source_resource_id: int
+    target_resource_id: int
+    relationship_type: str = "uses"  # uses, consumes, applies_to, attached_to, depends_on, connects_to
+    description: Optional[str] = None
+    properties: Optional[dict] = None
+
+
+class ResourceRelationshipCreate(ResourceRelationshipBase):
+    auto_detected: str = "no"  # Manual creation defaults to "no"
+    confidence: Optional[str] = None
+
+
+class ResourceRelationshipUpdate(BaseModel):
+    relationship_type: Optional[str] = None
+    description: Optional[str] = None
+    properties: Optional[dict] = None
+
+
+class ResourceRelationshipResponse(ResourceRelationshipBase):
+    id: int
+    auto_detected: str
+    confidence: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
+
+
+class ResourceRelationshipWithResources(ResourceRelationshipResponse):
+    source: ResourceResponse
+    target: ResourceResponse
+    
+    class Config:
+        from_attributes = True

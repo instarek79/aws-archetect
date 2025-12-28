@@ -153,7 +153,7 @@ function Resources() {
   const fetchResources = async () => {
     try {
       // Fetch all resources by setting a high limit - no auth required
-      const response = await axios.get(`${API_URL}/resources/?limit=10000`);
+      const response = await axios.get(`${API_URL}/api/resources/?limit=10000`);
       setResources(response.data);
       setError('');
     } catch (err) {
@@ -182,7 +182,7 @@ function Resources() {
     if (!headers) return;
 
     try {
-      await axios.delete(`${API_URL}/resources/${resourceId}`, { headers });
+      await axios.delete(`${API_URL}/api/resources/${resourceId}`, { headers });
       setSuccessMessage(t('resourceDeleted'));
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchResources();
@@ -197,10 +197,10 @@ function Resources() {
 
     try {
       if (modalMode === 'add') {
-        await axios.post(`${API_URL}/resources/`, formData, { headers });
+        await axios.post(`${API_URL}/api/resources/`, formData, { headers });
         setSuccessMessage(t('resourceCreated'));
       } else {
-        await axios.put(`${API_URL}/resources/${selectedResource.id}`, formData, { headers });
+        await axios.put(`${API_URL}/api/resources/${selectedResource.id}`, formData, { headers });
         setSuccessMessage(t('resourceUpdated'));
       }
       
@@ -248,7 +248,7 @@ function Resources() {
 
     for (const id of selectedIds) {
       try {
-        await axios.delete(`${API_URL}/resources/${id}`, { headers });
+        await axios.delete(`${API_URL}/api/resources/${id}`, { headers });
         deleted++;
       } catch (err) {
         failed++;

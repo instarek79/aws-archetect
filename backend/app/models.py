@@ -90,3 +90,49 @@ class Resource(Base):
     
     # Relationship
     user = relationship("User", back_populates="resources")
+    
+    # Resource relationships (outgoing)
+    outgoing_relationships = relationship(
+        "ResourceRelationship",
+        foreign_keys="ResourceRelationship.source_resource_id",
+        back_populates="source",
+        cascade="all, delete-orphan"
+    )
+    
+    # Resource relationships (incoming)
+    incoming_relationships = relationship(
+        "ResourceRelationship",
+        foreign_keys="ResourceRelationship.target_resource_id",
+        back_populates="target",
+        cascade="all, delete-orphan"
+    )
+
+
+class ResourceRelationship(Base):
+    """Tracks relationships/connections between resources with typed relationships"""
+    __tablename__ = "resource_relationships"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Source and target resources
+    source_resource_id = Column(Integer, ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_resource_id = Column(Integer, ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Relationship type: uses, consumes, applies_to, attached_to, depends_on, connects_to, etc.
+    relationship_type = Column(String, nullable=False, default="uses", index=True)
+    
+    # Additional metadata
+    description = Column(Text)  # Human-readable description of the relationship
+    auto_detected = Column(String, default="yes")  # yes/no - was this auto-detected or manually added?
+    confidence = Column(String)  # high/medium/low - confidence in auto-detection
+    
+    # Relationship properties (JSON for flexible data)
+    properties = Column(JSON, default=dict)  # Port numbers, protocols, etc.
+    
+    # Audit
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    source = relationship("Resource", foreign_keys=[source_resource_id], back_populates="outgoing_relationships")
+    target = relationship("Resource", foreign_keys=[target_resource_id], back_populates="incoming_relationships")

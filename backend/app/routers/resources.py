@@ -238,6 +238,40 @@ def create_resource(
     return db_resource
 
 
+@router.patch("/{resource_id}/vpc")
+def update_resource_vpc(
+    resource_id: int,
+    vpc_id: str = None,
+    subnet_id: str = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update resource VPC and subnet assignment"""
+    resource = db.query(Resource).filter(Resource.id == resource_id).first()
+    
+    if not resource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resource not found"
+        )
+    
+    # Update VPC and subnet
+    if vpc_id is not None:
+        resource.vpc_id = vpc_id if vpc_id else None
+    if subnet_id is not None:
+        resource.subnet_id = subnet_id if subnet_id else None
+    
+    db.commit()
+    db.refresh(resource)
+    
+    return {
+        "message": "Resource VPC assignment updated",
+        "resource_id": resource_id,
+        "vpc_id": resource.vpc_id,
+        "subnet_id": resource.subnet_id
+    }
+
+
 @router.put("/{resource_id}", response_model=ResourceResponse)
 def update_resource(
     resource_id: int,

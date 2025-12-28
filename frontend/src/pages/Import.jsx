@@ -162,6 +162,13 @@ function Import() {
   // Connectivity options
   const [showConnectivity, setShowConnectivity] = useState(false);
   const [connectivityMappings, setConnectivityMappings] = useState({});
+  
+  // Resource type filtering
+  const [selectedResourceTypes, setSelectedResourceTypes] = useState(new Set([
+    'vpc', 'subnet', 'ec2', 'instance', 'rds', 'aurora', 
+    'codepipeline', 'codebuild', 'rabbitmq', 'mq'
+  ]));
+  const [resourceTypeCounts, setResourceTypeCounts] = useState({});
 
   // Generate CSV template for download
   const downloadTemplate = (templateKey) => {
@@ -415,6 +422,15 @@ function Import() {
           invalid_count: 0,
           invalid_resources: []
         });
+        
+        // Calculate resource type counts
+        const typeCounts = {};
+        response.data.parsed_resources.forEach(r => {
+          const type = r.type?.toLowerCase() || 'unknown';
+          typeCounts[type] = (typeCounts[type] || 0) + 1;
+        });
+        setResourceTypeCounts(typeCounts);
+        
         setResourceType('mixed'); // Multiple resource types
         setStep(4); // Go directly to preview
         return;
@@ -510,6 +526,15 @@ function Import() {
       );
 
       setPreviewData(response.data);
+      
+      // Calculate resource type counts
+      const typeCounts = {};
+      response.data.valid_resources.forEach(r => {
+        const type = r.type?.toLowerCase() || 'unknown';
+        typeCounts[type] = (typeCounts[type] || 0) + 1;
+      });
+      setResourceTypeCounts(typeCounts);
+      
       setStep(4);
     } catch (error) {
       console.error('Preview failed:', error);
@@ -524,7 +549,16 @@ function Import() {
       return;
     }
     
-    let allResources = previewData.valid_resources;
+    // Filter resources by selected types
+    let allResources = previewData.valid_resources.filter(r => {
+      const type = r.type?.toLowerCase();
+      return selectedResourceTypes.has(type);
+    });
+    
+    if (allResources.length === 0) {
+      alert('No resources selected for import. Please select at least one resource type.');
+      return;
+    }
     console.log(`=== STARTING IMPORT === Total: ${allResources.length} resources`);
     console.log('First resource keys:', Object.keys(allResources[0]));
     console.log('First resource:', JSON.stringify(allResources[0]).substring(0, 500));
@@ -1315,22 +1349,95 @@ function Import() {
               </div>
             </div>
             
-            {/* Resource Type Breakdown for AWS Resource Explorer */}
-            {parsedData?.resource_types && Object.keys(parsedData.resource_types).length > 0 && (
+            {/* Resource Type Filtering */}
+            {Object.keys(resourceTypeCounts).length > 0 && (
               <div className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-3">Resource Types</h3>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(parsedData.resource_types)
+                <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+                  <Server className="w-5 h-5 mr-2 text-indigo-600" />
+                  Filter Resource Types to Import
+                </h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Select which resource types you want to import. Default selection includes main infrastructure components.
+                </p>
+                
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {Object.entries(resourceTypeCounts)
                     .sort((a, b) => b[1] - a[1])
-                    .map(([type, count]) => (
-                      <span 
-                        key={type} 
-                        className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full text-sm font-medium"
-                      >
-                        {type}: {count}
-                      </span>
-                    ))
+                    .map(([type, count]) => {
+                      const isSelected = selectedResourceTypes.has(type);
+                      const isDefault = ['vpc', 'subnet', 'ec2', 'instance', 'rds', 'aurora', 'codepipeline', 'codebuild', 'rabbitmq', 'mq'].includes(type);
+                      
+                      return (
+                        <label 
+                          key={type}
+                          className={`flex items-center p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                            isSelected 
+                              ? 'border-indigo-500 bg-indigo-50' 
+                              : 'border-gray-200 bg-white hover:border-gray-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const newSet = new Set(selectedResourceTypes);
+                              if (e.target.checked) {
+                                newSet.add(type);
+                              } else {
+                                newSet.delete(type);
+                              }
+                              setSelectedResourceTypes(newSet);
+                            }}
+                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 mr-2"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between">
+                              <span className={`text-sm font-medium truncate ${
+                                isSelected ? 'text-indigo-900' : 'text-gray-700'
+                              }`}>
+                                {type}
+                              </span>
+                              {isDefault && (
+                                <span className="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-xs rounded">✓</span>
+                              )}
+                            </div>
+                            <span className="text-xs text-gray-500">{count} items</span>
+                          </div>
+                        </label>
+                      );
+                    })
                   }
+                </div>
+                
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={() => setSelectedResourceTypes(new Set(Object.keys(resourceTypeCounts)))}
+                    className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={() => setSelectedResourceTypes(new Set())}
+                    className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    onClick={() => setSelectedResourceTypes(new Set([
+                      'vpc', 'subnet', 'ec2', 'instance', 'rds', 'aurora', 
+                      'codepipeline', 'codebuild', 'rabbitmq', 'mq'
+                    ]))}
+                    className="px-3 py-1.5 text-sm bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 font-medium"
+                  >
+                    Reset to Defaults
+                  </button>
+                </div>
+                
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>{selectedResourceTypes.size}</strong> resource types selected • 
+                    <strong>{previewData.valid_resources.filter(r => selectedResourceTypes.has(r.type?.toLowerCase())).length}</strong> resources will be imported
+                  </p>
                 </div>
               </div>
             )}
@@ -1386,7 +1493,7 @@ function Import() {
             {!importResult ? (
               <button
                 onClick={handleImport}
-                disabled={importing || previewData.valid_count === 0}
+                disabled={importing || previewData.valid_count === 0 || selectedResourceTypes.size === 0}
                 className="w-full px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 flex items-center justify-center"
               >
                 {importing ? (
@@ -1397,7 +1504,7 @@ function Import() {
                 ) : (
                   <>
                     <Database className="w-5 h-5 mr-2" />
-                    Import {previewData.valid_count} Resources
+                    Import {previewData.valid_resources.filter(r => selectedResourceTypes.has(r.type?.toLowerCase())).length} Resources
                   </>
                 )}
               </button>

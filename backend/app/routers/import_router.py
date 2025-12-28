@@ -11,7 +11,7 @@ from ..models import Resource, User
 from ..services.import_service import import_service
 from ..routers.auth import get_current_user
 
-router = APIRouter(prefix="/api/import", tags=["import"])
+router = APIRouter(prefix="/import", tags=["import"])
 
 
 class AnalyzeRequest(BaseModel):
@@ -380,6 +380,16 @@ async def execute_import(
             # Continue with next resource instead of failing all
             continue
     
+    # Auto-extract relationships after import
+    relationships_count = 0
+    try:
+        from app.services.relationship_extractor import RelationshipExtractor
+        logger.info("Extracting relationships from imported resources...")
+        relationships_count = RelationshipExtractor.extract_all_relationships(db)
+        logger.info(f"Extracted {relationships_count} relationships")
+    except Exception as e:
+        logger.warning(f"Relationship extraction failed (non-critical): {str(e)}")
+    
     try:
         total_count = created_count + updated_count
         logger.info(f"Import complete: {total_count} resources ({created_count} new, {updated_count} updated), {len(errors)} errors")
@@ -390,7 +400,8 @@ async def execute_import(
             "updated_count": updated_count,
             "error_count": len(errors),
             "errors": errors,
-            "message": f"Successfully imported {total_count} resources ({created_count} created, {updated_count} updated)"
+            "relationships_extracted": relationships_count,
+            "message": f"Successfully imported {total_count} resources ({created_count} created, {updated_count} updated) and extracted {relationships_count} relationships"
         }
     except Exception as e:
         logger.error(f"Database commit failed: {str(e)}")

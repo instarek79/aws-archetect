@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import axios from 'axios';
-import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity, Upload, Shield, Cloud, Layers, BarChart3, TrendingUp, AlertTriangle, CheckCircle, Clock, Eye, DollarSign } from 'lucide-react';
+import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity, Upload, Shield, Cloud, Layers, BarChart3, TrendingUp, AlertTriangle, CheckCircle, Clock, Eye, DollarSign, Compass } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -85,7 +85,7 @@ function Dashboard() {
     }
 
     try {
-      const response = await axios.get(`${API_URL}/auth/me`, {
+      const response = await axios.get(`${API_URL}/api/auth/me`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -112,7 +112,7 @@ function Dashboard() {
     }
 
     try {
-      const response = await axios.post(`${API_URL}/auth/refresh`, {
+      const response = await axios.post(`${API_URL}/api/auth/refresh`, {
         refresh_token: refresh
       });
       
@@ -135,7 +135,7 @@ function Dashboard() {
   const fetchResources = async () => {
     try {
       // Fetch stats from dedicated endpoint for accurate counts - no auth required
-      const statsResponse = await axios.get(`${API_URL}/resources/stats`);
+      const statsResponse = await axios.get(`${API_URL}/api/resources/stats`);
       const statsData = statsResponse.data;
       
       setStats({
@@ -153,7 +153,7 @@ function Dashboard() {
       });
       
       // Fetch ALL resources for accurate breakdown calculations - no auth required
-      const response = await axios.get(`${API_URL}/resources/?limit=5000`);
+      const response = await axios.get(`${API_URL}/api/resources/?limit=5000`);
       setResources(response.data);
     } catch (error) {
       console.error('Failed to fetch resources', error);
@@ -596,6 +596,13 @@ function Dashboard() {
               >
                 <Network className="w-4 h-4" />
                 <span className="text-sm font-medium">Diagram</span>
+              </button>
+              <button
+                onClick={() => navigate('/navigator')}
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-50 text-cyan-600 rounded-lg hover:bg-cyan-100 transition-colors"
+              >
+                <Compass className="w-4 h-4" />
+                <span className="text-sm font-medium">Navigator</span>
               </button>
               <button
                 onClick={() => navigate('/ai-insights')}
