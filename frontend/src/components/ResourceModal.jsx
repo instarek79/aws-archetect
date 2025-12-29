@@ -13,6 +13,23 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
   const [activeTab, setActiveTab] = useState('basic');
   const [arnInput, setArnInput] = useState('');
   const [arnParsing, setArnParsing] = useState(false);
+  
+  // Relationships state
+  const [relationships, setRelationships] = useState([]);
+  const [loadingRelationships, setLoadingRelationships] = useState(false);
+  const [showAddRelationship, setShowAddRelationship] = useState(false);
+  const [availableResources, setAvailableResources] = useState([]);
+  const [newRelationship, setNewRelationship] = useState({
+    target_resource_id: '',
+    relationship_type: 'uses',
+    label: '',
+    description: '',
+    port: '',
+    protocol: '',
+    direction: 'outbound',
+    status: 'active',
+    confidence: 'high'
+  });
 
   const [formData, setFormData] = useState({
     name: '', type: 'ec2', region: 'us-east-1', description: '',
@@ -45,6 +62,108 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
       return `${year}-${month}-${day}T${hours}:${minutes}`;
     } catch {
       return '';
+    }
+  };
+
+  // Fetch relationships when editing a resource
+  useEffect(() => {
+    if (resource && mode === 'edit' && isOpen) {
+      fetchRelationships();
+    }
+  }, [resource, mode, isOpen]);
+  
+  const fetchRelationships = async () => {
+    if (!resource?.id) return;
+    
+    setLoadingRelationships(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await axios.get(
+        `${API_URL}/api/relationships?source_id=${resource.id}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setRelationships(response.data || []);
+    } catch (error) {
+      console.error('Failed to fetch relationships:', error);
+    } finally {
+      setLoadingRelationships(false);
+    }
+  };
+
+  const fetchAvailableResources = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await axios.get(
+        `${API_URL}/api/resources`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      // Filter out the current resource
+      const filtered = (response.data || []).filter(r => r.id !== resource?.id);
+      setAvailableResources(filtered);
+    } catch (error) {
+      console.error('Failed to fetch resources:', error);
+    }
+  };
+
+  const handleAddRelationship = async () => {
+    if (!newRelationship.target_resource_id) {
+      alert('Please select a target resource');
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('access_token');
+      await axios.post(
+        `${API_URL}/api/relationships`,
+        {
+          source_resource_id: resource.id,
+          target_resource_id: parseInt(newRelationship.target_resource_id),
+          relationship_type: newRelationship.relationship_type,
+          label: newRelationship.label || null,
+          description: newRelationship.description || null,
+          port: newRelationship.port || null,
+          protocol: newRelationship.protocol || null,
+          direction: newRelationship.direction,
+          status: newRelationship.status,
+          confidence: newRelationship.confidence,
+          auto_detected: 'no'
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      // Reset form and refresh relationships
+      setNewRelationship({
+        target_resource_id: '',
+        relationship_type: 'uses',
+        label: '',
+        description: '',
+        port: '',
+        protocol: '',
+        direction: 'outbound',
+        status: 'active',
+        confidence: 'high'
+      });
+      setShowAddRelationship(false);
+      await fetchRelationships();
+    } catch (error) {
+      console.error('Failed to create relationship:', error);
+      alert('Failed to create relationship: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  const handleDeleteRelationship = async (relationshipId) => {
+    if (!confirm('Are you sure you want to delete this relationship?')) return;
+
+    try {
+      const token = localStorage.getItem('access_token');
+      await axios.delete(
+        `${API_URL}/api/relationships/${relationshipId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      await fetchRelationships();
+    } catch (error) {
+      console.error('Failed to delete relationship:', error);
+      alert('Failed to delete relationship: ' + (error.response?.data?.detail || error.message));
     }
   };
 
@@ -317,6 +436,7 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
               { id: 'aws', label: t('awsIdentifiers') || 'AWS Identifiers' },
               { id: 'details', label: t('details') || 'Details' },
               { id: 'networking', label: t('networking') || 'Networking' },
+              { id: 'relationships', label: `🔗 Relationships (${relationships.length})`, badge: relationships.length },
               { id: 'typespecific', label: `${formData.type.toUpperCase()} Properties` }
             ].map(tab => (
               <button
@@ -815,6 +935,296 @@ function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* RELATIONSHIPS TAB */}
+          {activeTab === 'relationships' && (
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <h3 className="text-sm font-semibold text-blue-900 mb-2">🔗 Resource Relationships</h3>
+                <p className="text-sm text-blue-700">
+                  View all connections from this resource to other resources. Each relationship includes port, protocol, direction, and status information.
+                </p>
+              </div>
+
+              {/* Add Relationship Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddRelationship(!showAddRelationship);
+                  if (!showAddRelationship) fetchAvailableResources();
+                }}
+                className="w-full mb-4 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center justify-center gap-2 font-semibold"
+              >
+                <Plus className="w-5 h-5" />
+                {showAddRelationship ? 'Cancel' : 'Add New Relationship'}
+              </button>
+
+              {/* Add Relationship Form */}
+              {showAddRelationship && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-4 space-y-3">
+                  <h4 className="font-semibold text-indigo-900 mb-3">Create New Relationship</h4>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Resource *</label>
+                    <select
+                      value={newRelationship.target_resource_id}
+                      onChange={(e) => setNewRelationship({...newRelationship, target_resource_id: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">Select a resource...</option>
+                      {availableResources.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} ({r.type}) - {r.resource_id || r.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Relationship Type *</label>
+                      <select
+                        value={newRelationship.relationship_type}
+                        onChange={(e) => setNewRelationship({...newRelationship, relationship_type: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="uses">Uses</option>
+                        <option value="depends_on">Depends On</option>
+                        <option value="connects_to">Connects To</option>
+                        <option value="routes_to">Routes To</option>
+                        <option value="attached_to">Attached To</option>
+                        <option value="applies_to">Applies To</option>
+                        <option value="manages">Manages</option>
+                        <option value="monitors">Monitors</option>
+                        <option value="backs_up">Backs Up</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Direction</label>
+                      <select
+                        value={newRelationship.direction}
+                        onChange={(e) => setNewRelationship({...newRelationship, direction: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="outbound">⬆️ Outbound</option>
+                        <option value="inbound">⬇️ Inbound</option>
+                        <option value="bidirectional">↔️ Bidirectional</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                      <input
+                        type="text"
+                        value={newRelationship.port}
+                        onChange={(e) => setNewRelationship({...newRelationship, port: e.target.value})}
+                        placeholder="e.g., 443"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Protocol</label>
+                      <input
+                        type="text"
+                        value={newRelationship.protocol}
+                        onChange={(e) => setNewRelationship({...newRelationship, protocol: e.target.value})}
+                        placeholder="e.g., HTTPS"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={newRelationship.status}
+                        onChange={(e) => setNewRelationship({...newRelationship, status: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="pending">Pending</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Label (Optional)</label>
+                    <input
+                      type="text"
+                      value={newRelationship.label}
+                      onChange={(e) => setNewRelationship({...newRelationship, label: e.target.value})}
+                      placeholder="e.g., API Gateway"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+                    <textarea
+                      value={newRelationship.description}
+                      onChange={(e) => setNewRelationship({...newRelationship, description: e.target.value})}
+                      placeholder="Additional details about this relationship..."
+                      rows={2}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddRelationship}
+                    className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
+                  >
+                    Create Relationship
+                  </button>
+                </div>
+              )}
+
+              {loadingRelationships ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+                  <p className="text-gray-600 mt-2">Loading relationships...</p>
+                </div>
+              ) : relationships.length === 0 && !showAddRelationship ? (
+                <div className="text-center py-8 bg-gray-50 rounded-lg">
+                  <p className="text-gray-500">No relationships found for this resource.</p>
+                  <p className="text-sm text-gray-400 mt-2">Click "Add New Relationship" above to create one.</p>
+                </div>
+              ) : relationships.length > 0 ? (
+                <div className="space-y-3">
+                  {relationships.map((rel, index) => (
+                    <div key={rel.id || index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-semibold">
+                              {rel.relationship_type}
+                            </span>
+                            {rel.label && (
+                              <span className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold">
+                                {rel.label}
+                              </span>
+                            )}
+                            {rel.status && (
+                              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                                rel.status === 'active' ? 'bg-green-100 text-green-800' :
+                                rel.status === 'inactive' ? 'bg-gray-100 text-gray-800' :
+                                'bg-yellow-100 text-yellow-800'
+                              }`}>
+                                {rel.status}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600">
+                            Target Resource ID: <span className="font-mono font-semibold">{rel.target_resource_id}</span>
+                          </p>
+                        </div>
+                        {rel.flow_order && (
+                          <div className="flex items-center justify-center w-10 h-10 bg-gray-800 text-white rounded-full font-bold">
+                            {rel.flow_order}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 pt-3 border-t border-gray-200">
+                        {rel.port && (
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Port</p>
+                            <p className="text-sm font-semibold text-gray-900">{rel.port}</p>
+                          </div>
+                        )}
+                        {rel.protocol && (
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Protocol</p>
+                            <p className="text-sm font-semibold text-gray-900">{rel.protocol}</p>
+                          </div>
+                        )}
+                        {rel.direction && (
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Direction</p>
+                            <p className="text-sm font-semibold text-gray-900">
+                              {rel.direction === 'inbound' ? '⬇️ Inbound' :
+                               rel.direction === 'outbound' ? '⬆️ Outbound' :
+                               '↔️ Bidirectional'}
+                            </p>
+                          </div>
+                        )}
+                        {rel.confidence && (
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Confidence</p>
+                            <p className="text-sm font-semibold text-gray-900">
+                              {rel.confidence === 'high' ? '🟢 High' :
+                               rel.confidence === 'medium' ? '🟡 Medium' :
+                               '🔴 Low'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {rel.description && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Description</p>
+                          <p className="text-sm text-gray-700">{rel.description}</p>
+                        </div>
+                      )}
+
+                      <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span className={`px-2 py-1 rounded ${
+                            rel.auto_detected === 'yes' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
+                          }`}>
+                            {rel.auto_detected === 'yes' ? '🤖 Auto-detected' : '✋ Manual'}
+                          </span>
+                          <span>Created: {new Date(rel.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRelationship(rel.id)}
+                          className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 flex items-center gap-1 text-xs font-semibold"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {relationships.length > 0 && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="text-sm font-semibold text-gray-900 mb-2">📊 Relationship Statistics</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                    <div>
+                      <p className="text-2xl font-bold text-indigo-600">{relationships.length}</p>
+                      <p className="text-xs text-gray-600">Total</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-green-600">
+                        {relationships.filter(r => r.status === 'active').length}
+                      </p>
+                      <p className="text-xs text-gray-600">Active</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-blue-600">
+                        {relationships.filter(r => r.auto_detected === 'yes').length}
+                      </p>
+                      <p className="text-xs text-gray-600">Auto-detected</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-purple-600">
+                        {relationships.filter(r => r.port).length}
+                      </p>
+                      <p className="text-xs text-gray-600">With Port Info</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

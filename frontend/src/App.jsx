@@ -5,7 +5,7 @@ import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Resources from './pages/Resources';
 import AIInsights from './pages/AIInsights';
-import ArchitectureDiagram from './pages/ArchitectureDiagram';
+import ArchitectureDiagram from './pages/ArchitectureDiagramFlow';
 import ResourcesNavigator from './pages/ResourcesNavigator';
 import Import from './pages/Import';
 import './i18n';

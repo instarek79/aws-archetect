@@ -74,6 +74,7 @@ const DEFAULT_COLUMNS = [
   { id: 'environment', label: 'Environment', width: 110, minWidth: 80, visible: false, sortable: true, resizable: true },
   { id: 'vpc_id', label: 'VPC', width: 140, minWidth: 80, visible: false, sortable: true, resizable: true },
   { id: 'tags', label: 'Tags', width: 100, minWidth: 60, visible: true, sortable: false, resizable: true },
+  { id: 'relationships_count', label: 'Connections', width: 110, minWidth: 80, visible: true, sortable: true, resizable: true },
   { id: 'created_at', label: 'Created', width: 110, minWidth: 80, visible: true, sortable: true, resizable: true },
   { id: 'actions', label: 'Actions', width: 100, minWidth: 80, visible: true, sortable: false, resizable: false },
 ];
@@ -85,6 +86,7 @@ function Resources() {
   const isRTL = i18n.language === 'ar';
 
   const [resources, setResources] = useState([]);
+  const [relationships, setRelationships] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -95,6 +97,10 @@ function Resources() {
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  
+  // Inline editing state
+  const [editingCell, setEditingCell] = useState(null); // { resourceId, field }
+  const [editValue, setEditValue] = useState('');
   
   // Load display settings from Dashboard
   const displaySettings = (() => {
@@ -148,7 +154,42 @@ function Resources() {
 
   useEffect(() => {
     fetchResources();
+    fetchRelationships();
   }, []);
+  
+  const fetchRelationships = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/api/relationships/`);
+      setRelationships(response.data);
+    } catch (err) {
+      console.error('Failed to fetch relationships:', err);
+    }
+  };
+  
+  // Handle edit parameter from URL (e.g., from diagram double-click)
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (editId && resources.length > 0) {
+      const resourceToEdit = resources.find(r => r.id === parseInt(editId));
+      if (resourceToEdit) {
+        setSelectedResource(resourceToEdit);
+        setModalMode('edit');
+        setIsModalOpen(true);
+        // Clear the edit parameter from URL
+        searchParams.delete('edit');
+        setSearchParams(searchParams);
+      }
+    }
+  }, [searchParams, resources]);
+
+  const getAuthHeader = () => {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      navigate('/login');
+      return null;
+    }
+    return { Authorization: `Bearer ${token}` };
+  };
 
   const fetchResources = async () => {
     try {
@@ -479,7 +520,59 @@ function Resources() {
   }
 
   // Render cell content based on column type
+  const handleCellDoubleClick = (resource, field) => {
+    // Allow editing for most fields (exclude system fields and IDs)
+    const nonEditableFields = ['select', 'actions', 'id', 'created_at', 'updated_at', 'category'];
+    if (nonEditableFields.includes(field)) return;
+    
+    setEditingCell({ resourceId: resource.id, field });
+    setEditValue(resource[field] || '');
+  };
+  
+  const handleCellSave = async () => {
+    if (!editingCell) return;
+    
+    const headers = getAuthHeader();
+    if (!headers) return;
+    
+    try {
+      await axios.put(
+        `${API_URL}/api/resources/${editingCell.resourceId}`,
+        { [editingCell.field]: editValue },
+        { headers }
+      );
+      
+      // Update local state
+      setResources(prev => prev.map(r => 
+        r.id === editingCell.resourceId 
+          ? { ...r, [editingCell.field]: editValue }
+          : r
+      ));
+      
+      setSuccessMessage('Field updated successfully');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError('Failed to update field');
+      setTimeout(() => setError(''), 3000);
+    } finally {
+      setEditingCell(null);
+      setEditValue('');
+    }
+  };
+  
+  const handleCellKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleCellSave();
+    } else if (e.key === 'Escape') {
+      setEditingCell(null);
+      setEditValue('');
+    }
+  };
+  
   const renderCell = (resource, columnId) => {
+    const isEditing = editingCell?.resourceId === resource.id && editingCell?.field === columnId;
+    const nonEditableFields = ['select', 'actions', 'id', 'created_at', 'updated_at', 'category'];
+    const isEditable = !nonEditableFields.includes(columnId);
     switch (columnId) {
       case 'select':
         return (
@@ -492,6 +585,19 @@ function Resources() {
           </button>
         );
       case 'name':
+        if (isEditing) {
+          return (
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          );
+        }
         return (
           <div>
             <div className="font-medium text-gray-900 truncate">{resource.name}</div>
@@ -501,16 +607,89 @@ function Resources() {
           </div>
         );
       case 'type':
+        if (isEditing) {
+          return (
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          );
+        }
         return (
           <span className="px-2 py-1 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-800">
             {resource.type}
           </span>
         );
       case 'region':
+        if (isEditing) {
+          return (
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          );
+        }
         return <span className="text-sm text-gray-600">{resource.region || '-'}</span>;
       case 'account_id':
+        if (isEditing) {
+          const uniqueAccounts = [...new Set(resources.map(r => r.account_id).filter(Boolean))];
+          return (
+            <select
+              value={editValue}
+              onChange={(e) => {
+                if (e.target.value === '__ADD_NEW__') {
+                  const newAccount = prompt('Enter new Account ID:');
+                  if (newAccount) {
+                    setEditValue(newAccount);
+                  }
+                } else {
+                  setEditValue(e.target.value);
+                }
+              }}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+            >
+              <option value="">None</option>
+              {uniqueAccounts.sort().map(acc => (
+                <option key={acc} value={acc}>{acc}</option>
+              ))}
+              <option value="__ADD_NEW__">+ Add New Account</option>
+            </select>
+          );
+        }
         return <span className="text-xs font-mono text-gray-600">{resource.account_id || '-'}</span>;
       case 'status':
+        if (isEditing) {
+          return (
+            <select
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="active">active</option>
+              <option value="running">running</option>
+              <option value="stopped">stopped</option>
+              <option value="pending">pending</option>
+              <option value="available">available</option>
+              <option value="unknown">unknown</option>
+            </select>
+          );
+        }
         const statusColors = {
           running: 'bg-green-100 text-green-800',
           active: 'bg-green-100 text-green-800',
@@ -541,18 +720,73 @@ function Resources() {
           </span>
         );
       case 'environment':
+        if (isEditing) {
+          return (
+            <select
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">None</option>
+              <option value="production">production</option>
+              <option value="staging">staging</option>
+              <option value="development">development</option>
+              <option value="testing">testing</option>
+            </select>
+          );
+        }
         return resource.environment ? (
           <span className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded">
             {resource.environment}
           </span>
         ) : <span className="text-gray-400">-</span>;
       case 'vpc_id':
+        if (isEditing) {
+          const uniqueVpcs = [...new Set(resources.map(r => r.vpc_id).filter(Boolean))];
+          return (
+            <select
+              value={editValue}
+              onChange={(e) => {
+                if (e.target.value === '__ADD_NEW__') {
+                  const newVpc = prompt('Enter new VPC ID (e.g., vpc-xxxxx):');
+                  if (newVpc) {
+                    setEditValue(newVpc);
+                  }
+                } else {
+                  setEditValue(e.target.value);
+                }
+              }}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+            >
+              <option value="">None</option>
+              {uniqueVpcs.sort().map(vpc => (
+                <option key={vpc} value={vpc}>{vpc}</option>
+              ))}
+              <option value="__ADD_NEW__">+ Add New VPC</option>
+            </select>
+          );
+        }
         return <span className="text-xs font-mono text-gray-600">{resource.vpc_id || '-'}</span>;
       case 'tags':
         const tagCount = resource.tags ? Object.keys(resource.tags).length : 0;
         return tagCount > 0 ? (
           <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
             {tagCount} tags
+          </span>
+        ) : <span className="text-gray-400">-</span>;
+      case 'relationships_count':
+        const relCount = relationships.filter(r => 
+          r.source_resource_id === resource.id || r.target_resource_id === resource.id
+        ).length;
+        return relCount > 0 ? (
+          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded font-medium">
+            {relCount} {relCount === 1 ? 'connection' : 'connections'}
           </span>
         ) : <span className="text-gray-400">-</span>;
       case 'created_at':
@@ -565,6 +799,40 @@ function Resources() {
             })}
           </span>
         );
+      case 'description':
+      case 'owner':
+      case 'cost_center':
+      case 'notes':
+        if (isEditing) {
+          return (
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          );
+        }
+        return <span className="text-gray-600">{resource[columnId] || '-'}</span>;
+      default:
+        // Default case for any other field - make it editable if not in non-editable list
+        if (isEditing) {
+          return (
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleCellKeyDown}
+              onBlur={handleCellSave}
+              autoFocus
+              className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          );
+        }
+        return <span className="text-gray-600">{resource[columnId] || '-'}</span>;
       case 'actions':
         return (
           <div className="flex gap-1">
@@ -591,8 +859,6 @@ function Resources() {
             </button>
           </div>
         );
-      default:
-        return resource[columnId] || '-';
     }
   };
 
@@ -1006,7 +1272,13 @@ function Resources() {
                         <td 
                           key={col.id} 
                           style={{ width: col.width }}
-                          className="px-3 py-3 text-sm"
+                          className={`px-3 py-3 text-sm ${
+                            !['select', 'actions', 'id', 'created_at', 'updated_at', 'category'].includes(col.id)
+                              ? 'cursor-pointer hover:bg-blue-50'
+                              : ''
+                          }`}
+                          onDoubleClick={() => handleCellDoubleClick(resource, col.id)}
+                          title={!['select', 'actions', 'id', 'created_at', 'updated_at', 'category'].includes(col.id) ? 'Double-click to edit' : ''}
                         >
                           {renderCell(resource, col.id)}
                         </td>

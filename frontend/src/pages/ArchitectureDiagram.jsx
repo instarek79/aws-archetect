@@ -159,6 +159,14 @@ function ArchitectureDiagram() {
   // Manual position overrides
   const [manualPositions, setManualPositions] = useState({});
   
+  // Connection mode for easier relationship creation (React Flow style)
+  const [connectionMode, setConnectionMode] = useState(false);
+  const [isDrawingRelationship, setIsDrawingRelationship] = useState(false);
+  const [relationshipSource, setRelationshipSource] = useState(null);
+  const [relationshipDragPos, setRelationshipDragPos] = useState({ x: 0, y: 0 });
+  const [showRelationshipModal, setShowRelationshipModal] = useState(false);
+  const [newRelationshipData, setNewRelationshipData] = useState(null);
+  
   // Relationships from database
   const [relationships, setRelationships] = useState([]);
   
@@ -1046,7 +1054,48 @@ function ArchitectureDiagram() {
       return x >= nx && x <= nx + width && y >= ny && y <= ny + height;
     });
 
+    // Connection mode: two-click workflow
+    if (connectionMode && clicked?.resource) {
+      if (!relationshipSource) {
+        // First click - select source
+        setRelationshipSource(clicked.resource);
+        setIsDrawingRelationship(true);
+        return;
+      } else if (clicked.resource.id !== relationshipSource.id) {
+        // Second click - select target and show modal
+        setNewRelationshipData({
+          source: relationshipSource,
+          target: clicked.resource
+        });
+        setShowRelationshipModal(true);
+        setIsDrawingRelationship(false);
+        setRelationshipSource(null);
+        return;
+      } else {
+        // Clicked same node - cancel
+        setRelationshipSource(null);
+        setIsDrawingRelationship(false);
+        return;
+      }
+    }
+
     setSelectedNode(clicked?.resource || null);
+  };
+
+  const handleDoubleClick = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left - pan.x) / zoom;
+    const y = (e.clientY - rect.top - pan.y) / zoom;
+
+    const clicked = Object.values(nodePositions).find(node => {
+      if (node.isVpc || node.isSubnet || !node.clickArea) return false;
+      const { x: nx, y: ny, width, height } = node.clickArea;
+      return x >= nx && x <= nx + width && y >= ny && y <= ny + height;
+    });
+
+    if (clicked?.resource) {
+      navigate(`/resources?edit=${clicked.resource.id}`);
+    }
   };
 
   const handleCanvasMouseMove = (e) => {
@@ -1094,8 +1143,10 @@ function ArchitectureDiagram() {
 
     setHoveredNode(hovered?.resource || null);
     
-    // Update cursor
-    if (hovered) {
+    // Update cursor based on mode
+    if (connectionMode) {
+      canvasRef.current.style.cursor = hovered ? 'crosshair' : 'crosshair';
+    } else if (hovered) {
       canvasRef.current.style.cursor = 'move';
     } else if (isDragging) {
       canvasRef.current.style.cursor = 'grabbing';
@@ -1105,6 +1156,9 @@ function ArchitectureDiagram() {
   };
 
   const handleMouseDown = (e) => {
+    // Don't allow dragging in connection mode
+    if (connectionMode) return;
+    
     const rect = canvasRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left - pan.x) / zoom;
     const y = (e.clientY - rect.top - pan.y) / zoom;
@@ -1184,6 +1238,37 @@ function ArchitectureDiagram() {
     link.download = 'aws-architecture-diagram.png';
     link.href = url;
     link.click();
+  };
+
+  const handleCreateRelationship = async (data) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      await axios.post(`${API_URL}/api/relationships`, {
+        source_resource_id: data.source.id,
+        target_resource_id: data.target.id,
+        relationship_type: data.relationship_type,
+        direction: data.direction,
+        port: data.port || null,
+        protocol: data.protocol || null,
+        label: data.label || null,
+        description: data.description || null,
+        status: data.status || 'active',
+        auto_detected: false
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      alert('Relationship created successfully!');
+      setShowRelationshipModal(false);
+      setNewRelationshipData(null);
+      
+      // Refresh relationships
+      await fetchRelationships();
+      drawDiagram();
+    } catch (error) {
+      console.error('Failed to create relationship:', error);
+      alert(`Failed to create relationship: ${error.response?.data?.detail || error.message}`);
+    }
   };
 
   const handleLogout = () => {
@@ -1454,12 +1539,63 @@ function ArchitectureDiagram() {
           <Download className="w-4 h-4" />
           Export PNG
         </button>
+
+        <div className="h-6 w-px bg-gray-300" />
+
+        {/* Connection Mode Toggle */}
+        <button 
+          onClick={() => {
+            setConnectionMode(!connectionMode);
+            if (connectionMode) {
+              // Cancel any in-progress connection
+              setRelationshipSource(null);
+              setIsDrawingRelationship(false);
+            }
+          }}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+            connectionMode 
+              ? 'bg-green-600 text-white shadow-lg' 
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+          title="Click to toggle connection mode"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          {connectionMode ? 'Connection Mode ON' : 'Add Connection'}
+        </button>
       </div>
 
       {/* Main content */}
       <div className="flex-1 flex">
         {/* Canvas */}
         <div className="flex-1 relative">
+          {/* Connection Mode Instruction Banner */}
+          {connectionMode && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-30 bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl flex items-center gap-3 text-sm animate-pulse">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <div>
+                <div className="font-bold">Connection Mode Active</div>
+                <div className="text-xs text-green-100">
+                  {relationshipSource 
+                    ? `Click target resource to connect with "${relationshipSource.name}"` 
+                    : 'Click first resource to start connection'}
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setConnectionMode(false);
+                  setRelationshipSource(null);
+                  setIsDrawingRelationship(false);
+                }}
+                className="ml-2 p-1 hover:bg-green-700 rounded"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           {filteredResources.length === 0 ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center">
@@ -1473,6 +1609,7 @@ function ArchitectureDiagram() {
               ref={canvasRef}
               className="w-full h-full"
               onClick={handleCanvasClick}
+              onDoubleClick={handleDoubleClick}
               onMouseMove={handleCanvasMouseMove}
               onMouseDown={handleMouseDown}
               onMouseUp={handleMouseUp}
@@ -1530,6 +1667,141 @@ function ArchitectureDiagram() {
               >
                 View in Resources
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Relationship Creation Modal */}
+        {showRelationshipModal && newRelationshipData && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-2xl p-6 max-w-md w-full mx-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold text-gray-900">Create Relationship</h3>
+                <button
+                  onClick={() => {
+                    setShowRelationshipModal(false);
+                    setNewRelationshipData(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                <div className="text-sm">
+                  <div className="font-semibold text-blue-900 mb-1">From: {newRelationshipData.source.name}</div>
+                  <div className="text-blue-700">→</div>
+                  <div className="font-semibold text-blue-900 mt-1">To: {newRelationshipData.target.name}</div>
+                </div>
+              </div>
+
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                handleCreateRelationship({
+                  source: newRelationshipData.source,
+                  target: newRelationshipData.target,
+                  relationship_type: formData.get('relationship_type'),
+                  direction: formData.get('direction'),
+                  port: formData.get('port'),
+                  protocol: formData.get('protocol'),
+                  label: formData.get('label'),
+                  description: formData.get('description'),
+                  status: 'active'
+                });
+              }} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Relationship Type *</label>
+                  <select
+                    name="relationship_type"
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="uses">Uses</option>
+                    <option value="depends_on">Depends On</option>
+                    <option value="connects_to">Connects To</option>
+                    <option value="routes_to">Routes To</option>
+                    <option value="attached_to">Attached To</option>
+                    <option value="applies_to">Applies To</option>
+                    <option value="manages">Manages</option>
+                    <option value="monitors">Monitors</option>
+                    <option value="backs_up">Backs Up</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Direction</label>
+                  <select
+                    name="direction"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="outbound">⬆️ Outbound</option>
+                    <option value="inbound">⬇️ Inbound</option>
+                    <option value="bidirectional">↔️ Bidirectional</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                    <input
+                      type="text"
+                      name="port"
+                      placeholder="e.g., 443"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Protocol</label>
+                    <input
+                      type="text"
+                      name="protocol"
+                      placeholder="e.g., HTTPS"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Label (Optional)</label>
+                  <input
+                    type="text"
+                    name="label"
+                    placeholder="e.g., API Gateway"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+                  <textarea
+                    name="description"
+                    rows={2}
+                    placeholder="Additional details..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowRelationshipModal(false);
+                      setNewRelationshipData(null);
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                  >
+                    Create
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
