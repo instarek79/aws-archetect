@@ -69,12 +69,14 @@ const getServiceEmoji = (type) => {
 };
 
 // Custom Node Components with Professional AWS Styling
-function ResourceNode({ data }) {
+function ResourceNode({ data, selected }) {
   const color = getServiceColor(data.resource.type);
   return (
     <div
-      className="group relative bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 border-2 min-w-[140px] overflow-hidden"
-      style={{ borderColor: color }}
+      className={`group relative bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 border-2 w-[140px] overflow-hidden ${
+        selected ? 'ring-4 ring-blue-400 ring-opacity-50' : ''
+      }`}
+      style={{ borderColor: selected ? '#3B82F6' : color }}
     >
       {/* Connection Handles */}
       <Handle
@@ -171,7 +173,11 @@ function VPCNode({ data }) {
         </div>
         <div>
           <div className="font-bold text-purple-900 text-xs">VPC</div>
-          <div className="text-[10px] text-purple-700 font-mono">{data.label}</div>
+          <div className="text-[10px] text-purple-700 font-mono">
+            {data.name && <span className="font-semibold">{data.name}</span>}
+            {data.name && data.label && <span className="mx-1">•</span>}
+            <span>{data.label}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -190,7 +196,10 @@ function AccountNode({ data }) {
         </div>
         <div>
           <div className="text-[10px] font-medium text-blue-100 uppercase tracking-wider">AWS Account</div>
-          <div className="font-bold text-white text-base font-mono">{data.label}</div>
+          <div className="font-bold text-white text-base">
+            {data.name && <div className="font-semibold">{data.name}</div>}
+            <div className="font-mono text-sm">{data.label}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -213,10 +222,41 @@ function ArchitectureDiagramFlow() {
   
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  const saveNodePositions = useCallback((nodes) => {
+    try {
+      const positions = {};
+      nodes.forEach(node => {
+        if (node.type === 'resource') {
+          positions[node.id] = { x: node.position.x, y: node.position.y };
+        }
+      });
+      localStorage.setItem('diagram_node_positions', JSON.stringify(positions));
+      setSavedPositions(positions);
+      console.log('Saved positions for', Object.keys(positions).length, 'nodes');
+    } catch (error) {
+      console.error('Failed to save positions:', error);
+    }
+  }, []);
+
+  const handleNodesChange = useCallback((changes) => {
+    onNodesChange(changes);
+    
+    const positionChange = changes.find(c => c.type === 'position' && c.dragging === false);
+    if (positionChange) {
+      setNodes(currentNodes => {
+        saveNodePositions(currentNodes);
+        return currentNodes;
+      });
+    }
+  }, [onNodesChange, saveNodePositions, setNodes]);
   
   const [showRelationshipModal, setShowRelationshipModal] = useState(false);
   const [newRelationshipData, setNewRelationshipData] = useState(null);
   const [connectionMode, setConnectionMode] = useState(false);
+  const [selectedResource, setSelectedResource] = useState(null);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [savedPositions, setSavedPositions] = useState({});
   
   // Filters - using Set for unchecked items (inverse logic - all checked by default)
   const [uncheckedAccounts, setUncheckedAccounts] = useState(new Set());
@@ -273,6 +313,27 @@ function ArchitectureDiagramFlow() {
   useEffect(() => {
     fetchResources();
     fetchRelationships();
+    loadSavedPositions();
+  }, []);
+
+  const loadSavedPositions = () => {
+    try {
+      const saved = localStorage.getItem('diagram_node_positions');
+      if (saved) {
+        setSavedPositions(JSON.parse(saved));
+        console.log('Loaded saved positions:', JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error('Failed to load saved positions:', error);
+    }
+  };
+
+  const resetLayout = useCallback(() => {
+    if (confirm('Reset diagram layout to default? This will clear all saved positions.')) {
+      localStorage.removeItem('diagram_node_positions');
+      setSavedPositions({});
+      window.location.reload();
+    }
   }, []);
 
   const fetchResources = async () => {
@@ -366,11 +427,13 @@ function ArchitectureDiagramFlow() {
         // Add VPC container node (child of account)
         if (vpcId !== 'no-vpc') {
           const vpcNodeId = `vpc-${vpcId}`;
+          // Try to find VPC name from resources
+          const vpcName = vpcResources[0]?.vpc_name || '';
           flowNodes.push({
             id: vpcNodeId,
             type: 'vpc',
             position: { x: 60, y: vpcY }, // Relative to account
-            data: { label: vpcId },
+            data: { label: vpcId, name: vpcName },
             style: {
               width: vpcWidth,
               height: vpcHeight,
@@ -386,13 +449,16 @@ function ArchitectureDiagramFlow() {
             const col = idx % resourcesPerRow;
             const row = Math.floor(idx / resourcesPerRow);
             
+            const resourceId = resource.id.toString();
+            const defaultPosition = {
+              x: resourceGap + col * (resourceWidth + resourceGap),
+              y: 70 + row * (resourceHeight + resourceGap), // Relative to VPC
+            };
+            
             flowNodes.push({
-              id: resource.id.toString(),
+              id: resourceId,
               type: 'resource',
-              position: {
-                x: resourceGap + col * (resourceWidth + resourceGap),
-                y: 70 + row * (resourceHeight + resourceGap), // Relative to VPC
-              },
+              position: savedPositions[resourceId] || defaultPosition,
               data: { resource },
               parentNode: vpcNodeId,
               extent: 'parent',
@@ -407,13 +473,16 @@ function ArchitectureDiagramFlow() {
             const col = idx % resourcesPerRow;
             const row = Math.floor(idx / resourcesPerRow);
             
+            const resourceId = resource.id.toString();
+            const defaultPosition = {
+              x: 80 + resourceGap + col * (resourceWidth + resourceGap),
+              y: vpcY + row * (resourceHeight + resourceGap),
+            };
+            
             flowNodes.push({
-              id: resource.id.toString(),
+              id: resourceId,
               type: 'resource',
-              position: {
-                x: 80 + resourceGap + col * (resourceWidth + resourceGap),
-                y: vpcY + row * (resourceHeight + resourceGap),
-              },
+              position: savedPositions[resourceId] || defaultPosition,
               data: { resource },
               parentNode: accountNodeId,
               extent: 'parent',
@@ -429,11 +498,13 @@ function ArchitectureDiagramFlow() {
       });
       
       // Add Account container node FIRST (before children are added)
+      // Try to find account name from resources
+      const accountName = Object.values(vpcs).flat()[0]?.account_name || '';
       flowNodes.unshift({
         id: accountNodeId,
         type: 'account',
         position: { x: accountX, y: accountY },
-        data: { label: accountId },
+        data: { label: accountId, name: accountName },
         style: {
           width: maxAccountWidth + 120,
           height: vpcY + 30,
@@ -446,7 +517,7 @@ function ArchitectureDiagramFlow() {
     });
 
     setNodes(flowNodes);
-  }, [filteredResources, setNodes]);
+  }, [filteredResources, setNodes, savedPositions]);
 
   // Convert relationships to React Flow edges with enhanced styling
   useEffect(() => {
@@ -506,30 +577,41 @@ function ArchitectureDiagramFlow() {
     [resources]
   );
 
-  const onNodeDoubleClick = useCallback(
-    (event, node) => {
+  const onNodeClick = useCallback((event, node) => {
+    if (node.type === 'resource') {
+      setSelectedResource(node.data.resource);
+      setShowSidebar(true);
+    }
+  }, []);
+
+  const onNodeDoubleClick = useCallback((event, node) => {
+    if (node.type === 'resource') {
       navigate(`/resources?edit=${node.data.resource.id}`);
-    },
-    [navigate]
-  );
+    }
+  }, [navigate]);
 
   const handleCreateRelationship = async (data) => {
     try {
       const token = localStorage.getItem('access_token');
+      
+      const payload = {
+        source_resource_id: data.source_resource_id,
+        target_resource_id: data.target_resource_id,
+        relationship_type: data.relationship_type,
+        direction: data.direction,
+        port: data.port ? parseInt(data.port) : null,
+        protocol: data.protocol || null,
+        label: data.label || null,
+        description: data.description || null,
+        status: data.status || 'active',
+        auto_detected: "no",
+      };
+      
+      console.log('Creating relationship with payload:', payload);
+      
       await axios.post(
         `${API_URL}/api/relationships`,
-        {
-          source_resource_id: data.source_resource_id,
-          target_resource_id: data.target_resource_id,
-          relationship_type: data.relationship_type,
-          direction: data.direction,
-          port: data.port || null,
-          protocol: data.protocol || null,
-          label: data.label || null,
-          description: data.description || null,
-          status: data.status || 'active',
-          auto_detected: false,
-        },
+        payload,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -542,7 +624,21 @@ function ArchitectureDiagramFlow() {
       await fetchRelationships();
     } catch (error) {
       console.error('Failed to create relationship:', error);
-      alert(`Failed to create relationship: ${error.response?.data?.detail || error.message}`);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      
+      let errorMessage = 'Failed to create relationship: ';
+      if (error.response?.data?.detail) {
+        if (Array.isArray(error.response.data.detail)) {
+          errorMessage += error.response.data.detail.map(e => `${e.loc?.join('.')}: ${e.msg}`).join(', ');
+        } else {
+          errorMessage += error.response.data.detail;
+        }
+      } else {
+        errorMessage += error.message;
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -563,13 +659,22 @@ function ArchitectureDiagramFlow() {
       <div className="bg-white border-b px-4 py-2">
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold text-gray-900">Architecture Diagram</h1>
-          <button
-            onClick={() => navigate('/resources')}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-md hover:shadow-lg transition-all"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Back to Resources
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={resetLayout}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-md hover:shadow-lg transition-all"
+              title="Reset diagram layout to default"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Reset Layout
+            </button>
+            <button
+              onClick={() => navigate('/resources')}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-md hover:shadow-lg transition-all"
+            >
+              Back to Resources
+            </button>
+          </div>
         </div>
 
         {/* Filters with Checkboxes */}
@@ -699,9 +804,10 @@ function ArchitectureDiagramFlow() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeClick={onNodeClick}
           onNodeDoubleClick={onNodeDoubleClick}
           nodeTypes={nodeTypes}
           fitView
@@ -794,6 +900,7 @@ function ArchitectureDiagramFlow() {
                   <option value="connects_to">Connects To</option>
                   <option value="routes_to">Routes To</option>
                   <option value="attached_to">Attached To</option>
+                  <option value="deploy_to">Deploy To</option>
                 </select>
               </div>
 
@@ -856,6 +963,165 @@ function ArchitectureDiagramFlow() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Resource Details Sidebar */}
+      {showSidebar && selectedResource && (
+        <div className="fixed right-0 top-0 h-full w-96 bg-white shadow-2xl border-l border-gray-200 z-50 overflow-y-auto">
+          <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-gray-900">Resource Details</h2>
+            <button
+              onClick={() => {
+                setShowSidebar(false);
+                setSelectedResource(null);
+              }}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Resource Header */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+              <div className="flex items-center gap-3 mb-2">
+                <div 
+                  className="w-12 h-12 rounded-lg flex items-center justify-center text-white text-2xl shadow-md"
+                  style={{ background: `linear-gradient(135deg, ${getServiceColor(selectedResource.type)}, ${getServiceColor(selectedResource.type)}cc)` }}
+                >
+                  {getServiceEmoji(selectedResource.type)}
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-gray-900 text-base">{selectedResource.name || 'Unnamed Resource'}</h3>
+                  <p className="text-xs text-gray-600 font-medium">{selectedResource.type?.toUpperCase()}</p>
+                </div>
+              </div>
+              {selectedResource.status && (
+                <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+                  selectedResource.status === 'active' || selectedResource.status === 'running'
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-gray-100 text-gray-600'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    selectedResource.status === 'active' || selectedResource.status === 'running'
+                      ? 'bg-green-500 animate-pulse'
+                      : 'bg-gray-400'
+                  }`} />
+                  {selectedResource.status}
+                </div>
+              )}
+            </div>
+
+            {/* Basic Information */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-gray-900 text-sm border-b pb-2">Basic Information</h4>
+              
+              {selectedResource.resource_id && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">Resource ID</label>
+                  <p className="text-sm text-gray-900 font-mono mt-1">{selectedResource.resource_id}</p>
+                </div>
+              )}
+
+              {selectedResource.account_id && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">Account ID</label>
+                  <p className="text-sm text-gray-900 font-mono mt-1">{selectedResource.account_id}</p>
+                </div>
+              )}
+
+              {selectedResource.region && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">Region</label>
+                  <p className="text-sm text-gray-900 mt-1">📍 {selectedResource.region}</p>
+                </div>
+              )}
+
+              {selectedResource.vpc_id && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">VPC</label>
+                  <p className="text-sm text-gray-900 font-mono mt-1">{selectedResource.vpc_id}</p>
+                </div>
+              )}
+
+              {selectedResource.subnet_id && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">Subnet</label>
+                  <p className="text-sm text-gray-900 font-mono mt-1">{selectedResource.subnet_id}</p>
+                </div>
+              )}
+
+              {selectedResource.environment && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 uppercase">Environment</label>
+                  <p className="text-sm text-gray-900 mt-1">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                      selectedResource.environment === 'production' ? 'bg-red-100 text-red-700' :
+                      selectedResource.environment === 'staging' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-blue-100 text-blue-700'
+                    }`}>
+                      {selectedResource.environment}
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Network Information */}
+            {(selectedResource.public_ip || selectedResource.private_ip) && (
+              <div className="space-y-3">
+                <h4 className="font-semibold text-gray-900 text-sm border-b pb-2">Network</h4>
+                
+                {selectedResource.public_ip && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 uppercase">Public IP</label>
+                    <p className="text-sm text-gray-900 font-mono mt-1">{selectedResource.public_ip}</p>
+                  </div>
+                )}
+
+                {selectedResource.private_ip && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 uppercase">Private IP</label>
+                    <p className="text-sm text-gray-900 font-mono mt-1">{selectedResource.private_ip}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tags */}
+            {selectedResource.tags && Object.keys(selectedResource.tags).length > 0 && (
+              <div className="space-y-3">
+                <h4 className="font-semibold text-gray-900 text-sm border-b pb-2">Tags</h4>
+                <div className="space-y-2">
+                  {Object.entries(selectedResource.tags).map(([key, value]) => (
+                    <div key={key} className="flex items-start gap-2">
+                      <span className="text-xs font-medium text-gray-500 min-w-[80px]">{key}:</span>
+                      <span className="text-xs text-gray-900 flex-1">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Description */}
+            {selectedResource.description && (
+              <div className="space-y-3">
+                <h4 className="font-semibold text-gray-900 text-sm border-b pb-2">Description</h4>
+                <p className="text-sm text-gray-700">{selectedResource.description}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="pt-4 border-t">
+              <button
+                onClick={() => navigate(`/resources?edit=${selectedResource.id}`)}
+                className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-sm"
+              >
+                Edit Resource
+              </button>
+            </div>
           </div>
         </div>
       )}
