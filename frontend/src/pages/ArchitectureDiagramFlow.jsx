@@ -14,9 +14,13 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-  Download, X, RefreshCw, Layers
+  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film
 } from 'lucide-react';
 import axios from 'axios';
+import dagre from 'dagre';
+import { toPng, toJpeg } from 'html-to-image';
+import jsPDF from 'jspdf';
+import GIF from 'gif.js';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -257,6 +261,7 @@ function ArchitectureDiagramFlow() {
   const [selectedResource, setSelectedResource] = useState(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [savedPositions, setSavedPositions] = useState({});
+  const [previousPositions, setPreviousPositions] = useState(null);
   
   // Filters - using Set for unchecked items (inverse logic - all checked by default)
   const [uncheckedAccounts, setUncheckedAccounts] = useState(new Set());
@@ -334,6 +339,226 @@ function ArchitectureDiagramFlow() {
       setSavedPositions({});
       window.location.reload();
     }
+  }, []);
+
+  const applyAutoLayout = useCallback(() => {
+    if (nodes.length === 0 || relationships.length === 0) {
+      alert('No relationships found. Auto-layout works best when resources have connections.');
+      return;
+    }
+
+    // Save current positions for undo
+    setPreviousPositions({...savedPositions});
+
+    const resourceNodes = nodes.filter(n => n.type === 'resource');
+    const newPositions = {};
+
+    // Group resources by their parent (VPC or Account)
+    const parentGroups = {};
+    resourceNodes.forEach(node => {
+      const parentId = node.parentNode || 'root';
+      if (!parentGroups[parentId]) {
+        parentGroups[parentId] = [];
+      }
+      parentGroups[parentId].push(node);
+    });
+
+    // Process each parent group separately to maintain hierarchy
+    Object.entries(parentGroups).forEach(([parentId, groupNodes]) => {
+      if (groupNodes.length === 0) return;
+
+      // Create a subgraph for this parent's resources only
+      const subGraph = new dagre.graphlib.Graph();
+      subGraph.setDefaultEdgeLabel(() => ({}));
+      
+      subGraph.setGraph({ 
+        rankdir: 'TB', // Top to bottom for better fit in containers
+        nodesep: 80,
+        ranksep: 100,
+        edgesep: 40,
+        marginx: 20,
+        marginy: 20
+      });
+
+      // Add nodes from this group
+      groupNodes.forEach(node => {
+        subGraph.setNode(node.id, { 
+          width: 140, 
+          height: 100 
+        });
+      });
+
+      // Add edges only between nodes in this group
+      const groupNodeIds = new Set(groupNodes.map(n => n.id));
+      relationships.forEach(rel => {
+        const sourceId = rel.source_resource_id.toString();
+        const targetId = rel.target_resource_id.toString();
+        if (groupNodeIds.has(sourceId) && groupNodeIds.has(targetId)) {
+          subGraph.setEdge(sourceId, targetId);
+        }
+      });
+
+      // Run layout for this group
+      dagre.layout(subGraph);
+
+      // Apply positions relative to parent container
+      groupNodes.forEach(node => {
+        const nodeWithPosition = subGraph.node(node.id);
+        if (nodeWithPosition) {
+          newPositions[node.id] = {
+            x: nodeWithPosition.x - 70,
+            y: nodeWithPosition.y - 50
+          };
+        }
+      });
+    });
+
+    // Save the new positions
+    localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
+    localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
+    setSavedPositions(newPositions);
+    
+    // Reload to apply
+    window.location.reload();
+  }, [nodes, relationships, savedPositions]);
+
+  const undoAutoLayout = useCallback(() => {
+    const previous = localStorage.getItem('diagram_previous_positions');
+    if (!previous) {
+      alert('No previous layout to restore.');
+      return;
+    }
+
+    if (confirm('Restore previous layout before auto-layout?')) {
+      localStorage.setItem('diagram_node_positions', previous);
+      localStorage.removeItem('diagram_previous_positions');
+      window.location.reload();
+    }
+  }, []);
+
+  const exportAsPNG = useCallback(() => {
+    const diagramElement = document.querySelector('.react-flow');
+    if (!diagramElement) {
+      alert('Diagram not found');
+      return;
+    }
+
+    toPng(diagramElement, {
+      cacheBust: true,
+      backgroundColor: '#f9fafb',
+      width: diagramElement.offsetWidth,
+      height: diagramElement.offsetHeight,
+      skipFonts: true,
+    })
+      .then((dataUrl) => {
+        const link = document.createElement('a');
+        link.download = `architecture-diagram-${new Date().toISOString().split('T')[0]}.png`;
+        link.href = dataUrl;
+        link.click();
+      })
+      .catch((err) => {
+        console.error('Failed to export PNG:', err);
+        alert('Failed to export diagram as PNG');
+      });
+  }, []);
+
+  const exportAsPDF = useCallback(() => {
+    const diagramElement = document.querySelector('.react-flow');
+    if (!diagramElement) {
+      alert('Diagram not found');
+      return;
+    }
+
+    toPng(diagramElement, {
+      cacheBust: true,
+      backgroundColor: '#f9fafb',
+      width: diagramElement.offsetWidth,
+      height: diagramElement.offsetHeight,
+      skipFonts: true,
+    })
+      .then((dataUrl) => {
+        try {
+          const imgWidth = diagramElement.offsetWidth;
+          const imgHeight = diagramElement.offsetHeight;
+          
+          const pdf = new jsPDF({
+            orientation: imgWidth > imgHeight ? 'landscape' : 'portrait',
+            unit: 'px',
+            format: [imgWidth, imgHeight]
+          });
+          
+          pdf.addImage(dataUrl, 'PNG', 0, 0, imgWidth, imgHeight);
+          pdf.save(`architecture-diagram-${new Date().toISOString().split('T')[0]}.pdf`);
+          console.log('PDF exported successfully');
+        } catch (error) {
+          console.error('PDF generation error:', error);
+          alert('Failed to generate PDF: ' + error.message);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to export PDF:', err);
+        alert('Failed to export diagram as PDF: ' + err.message);
+      });
+  }, []);
+
+  const exportAsGIF = useCallback(() => {
+    const diagramElement = document.querySelector('.react-flow');
+    if (!diagramElement) {
+      alert('Diagram not found');
+      return;
+    }
+
+    alert('Creating animated GIF... This may take a few seconds.');
+
+    const gif = new GIF({
+      workers: 2,
+      quality: 10,
+      width: diagramElement.offsetWidth,
+      height: diagramElement.offsetHeight,
+      workerScript: '/node_modules/gif.js/dist/gif.worker.js'
+    });
+
+    let frameCount = 0;
+    const maxFrames = 30;
+    const captureInterval = 100;
+
+    const captureFrame = () => {
+      toPng(diagramElement, {
+        cacheBust: true,
+        backgroundColor: '#f9fafb',
+        width: diagramElement.offsetWidth,
+        height: diagramElement.offsetHeight,
+        skipFonts: true,
+      })
+        .then((dataUrl) => {
+          const img = new Image();
+          img.onload = () => {
+            gif.addFrame(img, { delay: 200 });
+            frameCount++;
+
+            if (frameCount < maxFrames) {
+              setTimeout(captureFrame, captureInterval);
+            } else {
+              gif.on('finished', (blob) => {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = `architecture-diagram-${new Date().toISOString().split('T')[0]}.gif`;
+                link.href = url;
+                link.click();
+                URL.revokeObjectURL(url);
+                alert('GIF exported successfully!');
+              });
+              gif.render();
+            }
+          };
+          img.src = dataUrl;
+        })
+        .catch((err) => {
+          console.error('Failed to capture frame:', err);
+        });
+    };
+
+    captureFrame();
   }, []);
 
   const fetchResources = async () => {
@@ -660,6 +885,46 @@ function ArchitectureDiagramFlow() {
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold text-gray-900">Architecture Diagram</h1>
           <div className="flex items-center gap-2">
+            <button
+              onClick={exportAsPNG}
+              className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 shadow-md hover:shadow-lg transition-all"
+              title="Export diagram as PNG image"
+            >
+              <FileImage className="w-4 h-4" />
+              Export PNG
+            </button>
+            <button
+              onClick={exportAsPDF}
+              className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 shadow-md hover:shadow-lg transition-all"
+              title="Export diagram as PDF document"
+            >
+              <FileText className="w-4 h-4" />
+              Export PDF
+            </button>
+            <button
+              onClick={exportAsGIF}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 shadow-md hover:shadow-lg transition-all"
+              title="Export diagram as animated GIF"
+            >
+              <Film className="w-4 h-4" />
+              Export GIF
+            </button>
+            <button
+              onClick={applyAutoLayout}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
+              title="Intelligently arrange resources based on relationships within their containers"
+            >
+              <Sparkles className="w-4 h-4" />
+              Auto-Layout
+            </button>
+            <button
+              onClick={undoAutoLayout}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 shadow-md hover:shadow-lg transition-all"
+              title="Undo last auto-layout and restore previous positions"
+            >
+              <RefreshCw className="w-4 h-4 transform scale-x-[-1]" />
+              Undo Layout
+            </button>
             <button
               onClick={resetLayout}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-md hover:shadow-lg transition-all"
