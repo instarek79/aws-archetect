@@ -289,6 +289,11 @@ function ArchitectureDiagramFlow() {
   const [showTypeFilter, setShowTypeFilter] = useState(false);
   const [showRelTypeFilter, setShowRelTypeFilter] = useState(false);
   const [highlightedNode, setHighlightedNode] = useState(null);
+  const [isLayoutLoading, setIsLayoutLoading] = useState(false);
+  const [layoutProgress, setLayoutProgress] = useState('');
+  const [useFlatLayout, setUseFlatLayout] = useState(() => {
+    return localStorage.getItem('diagram_flat_layout') === 'true';
+  });
   
   // Get unique values for filters
   const accounts = useMemo(() => {
@@ -364,8 +369,10 @@ function ArchitectureDiagramFlow() {
   };
 
   const resetLayout = useCallback(() => {
-    if (confirm('Reset diagram layout to default? This will clear all saved positions.')) {
+    if (confirm('Reset to default hierarchical view? This will clear all saved positions.')) {
       localStorage.removeItem('diagram_node_positions');
+      localStorage.removeItem('diagram_previous_positions');
+      localStorage.removeItem('diagram_flat_layout');
       setSavedPositions({});
       window.location.reload();
     }
@@ -464,11 +471,16 @@ function ArchitectureDiagramFlow() {
       return;
     }
 
+    setIsLayoutLoading(true);
+    setLayoutProgress('🤖 Preparing data for AI analysis...');
+
     try {
       // Save current positions for undo
       setPreviousPositions({...savedPositions});
 
       const resourceNodes = nodes.filter(n => n.type === 'resource');
+      
+      setLayoutProgress(`🤖 Analyzing ${resourceNodes.length} resources with Ollama qwen2.5...`);
       
       // Prepare data for AI analysis
       const layoutData = {
@@ -485,28 +497,38 @@ function ArchitectureDiagramFlow() {
         }))
       };
 
-      // Call Ollama qwen2.5 for intelligent grouping analysis
-      alert('Analyzing architecture with AI... This may take a few seconds.');
+      setLayoutProgress('🤖 Waiting for AI response (may take 10-30 seconds)...');
       
       const response = await axios.post(`${API_URL}/api/ai/analyze-layout`, layoutData, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+        timeout: 120000 // 2 minute timeout
       });
 
+      setLayoutProgress('🤖 Processing AI suggestions...');
+      
       const aiSuggestions = response.data;
       console.log('AI Layout Suggestions:', aiSuggestions);
 
+      setLayoutProgress('📐 Applying AI-suggested layout...');
+      
       // Apply AI-suggested groupings
       const newPositions = applyAISuggestedLayout(resourceNodes, relationships, aiSuggestions);
       
-      // Save the new positions
+      // Save positions and enable flat layout mode
       localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
       localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
+      localStorage.setItem('diagram_flat_layout', 'true');
       setSavedPositions(newPositions);
+      
+      setLayoutProgress('✅ Layout complete! Refreshing...');
+      await new Promise(r => setTimeout(r, 500));
       
       window.location.reload();
     } catch (error) {
       console.error('AI layout failed:', error);
-      alert('AI layout failed. Falling back to standard auto-layout.');
+      setIsLayoutLoading(false);
+      setLayoutProgress('');
+      alert('AI layout failed: ' + (error.response?.data?.detail || error.message) + '\n\nFalling back to AWS layout.');
       applyAutoLayout();
     }
   }, [nodes, relationships, savedPositions]);
@@ -518,11 +540,17 @@ function ArchitectureDiagramFlow() {
       return;
     }
 
+    setIsLayoutLoading(true);
+    setLayoutProgress('🔄 Preparing ELK layout engine...');
+
     try {
       // Save current positions for undo
       setPreviousPositions({...savedPositions});
 
       const resourceNodes = nodes.filter(n => n.type === 'resource');
+      
+      setLayoutProgress(`🔄 Building graph with ${resourceNodes.length} nodes...`);
+      await new Promise(r => setTimeout(r, 100));
       
       // Build ELK graph structure
       const elkGraph = {
@@ -530,8 +558,8 @@ function ArchitectureDiagramFlow() {
         layoutOptions: {
           'elk.algorithm': 'layered',
           'elk.direction': 'RIGHT',
-          'elk.spacing.nodeNode': '80',
-          'elk.layered.spacing.nodeNodeBetweenLayers': '120',
+          'elk.spacing.nodeNode': '100',
+          'elk.layered.spacing.nodeNodeBetweenLayers': '150',
           'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
           'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
           'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
@@ -541,8 +569,8 @@ function ArchitectureDiagramFlow() {
         },
         children: resourceNodes.map(node => ({
           id: node.id,
-          width: 100,
-          height: 80,
+          width: 140,
+          height: 100,
         })),
         edges: relationships.map(rel => ({
           id: `elk-edge-${rel.id}`,
@@ -551,8 +579,10 @@ function ArchitectureDiagramFlow() {
         })),
       };
 
-      console.log('🔄 Running ELK layout with crossing minimization...');
+      setLayoutProgress('🔄 Running ELK crossing minimization algorithm...');
       const layoutedGraph = await elk.layout(elkGraph);
+      
+      setLayoutProgress('📐 Applying optimized positions...');
       
       const newPositions = {};
       layoutedGraph.children?.forEach(node => {
@@ -561,98 +591,157 @@ function ArchitectureDiagramFlow() {
 
       console.log(`✅ ELK positioned ${Object.keys(newPositions).length} nodes`);
       
-      // Save positions
+      // Save positions and enable flat layout mode
       localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
       localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
+      localStorage.setItem('diagram_flat_layout', 'true');
       setSavedPositions(newPositions);
+      
+      setLayoutProgress('✅ Layout complete! Refreshing...');
+      await new Promise(r => setTimeout(r, 300));
       
       window.location.reload();
     } catch (error) {
       console.error('ELK layout failed:', error);
       alert('ELK layout failed: ' + error.message);
+    } finally {
+      setIsLayoutLoading(false);
+      setLayoutProgress('');
     }
   }, [nodes, relationships, savedPositions]);
 
-  const applyAutoLayout = useCallback(() => {
-    if (nodes.length === 0 || relationships.length === 0) {
-      alert('No relationships found. Auto-layout works best when resources have connections.');
+  // Professional AWS Architecture Layout - Aggressively fills full screen
+  const applyAutoLayout = useCallback(async () => {
+    if (filteredResources.length === 0) {
+      alert('No resources to layout.');
       return;
     }
 
-    // Save current positions for undo
-    setPreviousPositions({...savedPositions});
+    setIsLayoutLoading(true);
+    setLayoutProgress('Analyzing resources...');
 
-    const resourceNodes = nodes.filter(n => n.type === 'resource');
-    const newPositions = {};
+    try {
+      // Save current positions for undo
+      setPreviousPositions({...savedPositions});
 
-    // Group resources by their parent (VPC or Account)
-    const parentGroups = {};
-    resourceNodes.forEach(node => {
-      const parentId = node.parentNode || 'root';
-      if (!parentGroups[parentId]) {
-        parentGroups[parentId] = [];
+      // Filter out container types
+      const containerTypes = ['vpc', 'subnet', 'internet-gateway', 'nat-gateway', 'route-table', 'network-acl'];
+      const actualResources = filteredResources.filter(r => 
+        !containerTypes.includes(r.type?.toLowerCase())
+      );
+
+      const resourceCount = actualResources.length;
+      if (resourceCount === 0) {
+        alert('No resources to layout after filtering containers.');
+        setIsLayoutLoading(false);
+        return;
       }
-      parentGroups[parentId].push(node);
-    });
 
-    // Process each parent group separately to maintain hierarchy
-    Object.entries(parentGroups).forEach(([parentId, groupNodes]) => {
-      if (groupNodes.length === 0) return;
+      setLayoutProgress(`Optimizing layout for ${resourceCount} resources...`);
+      await new Promise(r => setTimeout(r, 100));
 
-      // Create a subgraph for this parent's resources only
-      const subGraph = new dagre.graphlib.Graph();
-      subGraph.setDefaultEdgeLabel(() => ({}));
+      // ========== AGGRESSIVE FULL-SCREEN LAYOUT ==========
+      // Calculate available viewport space
+      const VIEWPORT_W = Math.max(2000, window.innerWidth * 1.5);
+      const VIEWPORT_H = Math.max(1200, window.innerHeight * 1.2);
+      const PADDING = 100;
       
-      subGraph.setGraph({ 
-        rankdir: 'TB', // Top to bottom for better fit in containers
-        nodesep: 50,
-        ranksep: 60,
-        edgesep: 30,
-        marginx: 15,
-        marginy: 15
-      });
+      // Node dimensions
+      const NODE_W = 160;
+      const NODE_H = 120;
+      
+      // Calculate optimal grid dimensions
+      // Goal: Fill the screen with evenly distributed resources
+      const availableW = VIEWPORT_W - (PADDING * 2);
+      const availableH = VIEWPORT_H - (PADDING * 2);
+      
+      // Calculate optimal columns and rows to fill screen
+      const aspectRatio = availableW / availableH;
+      let cols = Math.ceil(Math.sqrt(resourceCount * aspectRatio));
+      let rows = Math.ceil(resourceCount / cols);
+      
+      // Ensure minimum spread
+      cols = Math.max(cols, Math.min(resourceCount, 6));
+      rows = Math.max(rows, Math.ceil(resourceCount / cols));
+      
+      // Calculate spacing to fill available space
+      const cellW = availableW / cols;
+      const cellH = availableH / rows;
+      
+      // Ensure minimum cell size
+      const finalCellW = Math.max(cellW, NODE_W + 60);
+      const finalCellH = Math.max(cellH, NODE_H + 80);
 
-      // Add nodes from this group
-      groupNodes.forEach(node => {
-        subGraph.setNode(node.id, { 
-          width: 90, 
-          height: 70 
-        });
-      });
+      setLayoutProgress('Classifying by service tier...');
+      await new Promise(r => setTimeout(r, 100));
 
-      // Add edges only between nodes in this group
-      const groupNodeIds = new Set(groupNodes.map(n => n.id));
-      relationships.forEach(rel => {
-        const sourceId = rel.source_resource_id.toString();
-        const targetId = rel.target_resource_id.toString();
-        if (groupNodeIds.has(sourceId) && groupNodeIds.has(targetId)) {
-          subGraph.setEdge(sourceId, targetId);
+      // AWS Service Tier Classification for left-to-right flow
+      const SERVICE_TIERS = {
+        entry: ['cloudfront', 'apigateway', 'api-gateway', 'route53', 'waf', 'shield', 'acm', 'amplify', 'elb', 'alb', 'nlb'],
+        compute: ['ec2', 'lambda', 'ecs', 'eks', 'fargate', 'batch', 'lightsail', 'beanstalk', 'apprunner'],
+        application: ['sqs', 'sns', 'eventbridge', 'stepfunctions', 'step-functions', 'mq', 'kinesis', 'appsync', 'cognito'],
+        data: ['rds', 'aurora', 'dynamodb', 'elasticache', 'redis', 'memcached', 'neptune', 'documentdb', 'timestream', 'keyspaces', 'redshift'],
+        storage: ['s3', 'ebs', 'efs', 'fsx', 'glacier', 'backup', 'storagegateway'],
+        operations: ['cloudwatch', 'cloudtrail', 'config', 'guardduty', 'inspector', 'securityhub', 'iam', 'kms', 'secrets', 'ssm', 'codepipeline', 'codebuild', 'codecommit', 'codedeploy', 'ecr'],
+      };
+
+      const TIER_ORDER = ['entry', 'compute', 'application', 'data', 'storage', 'operations'];
+
+      const classifyResource = (resource) => {
+        const type = (resource.type || '').toLowerCase();
+        const name = (resource.name || '').toLowerCase();
+        for (const [tier, keywords] of Object.entries(SERVICE_TIERS)) {
+          if (keywords.some(kw => type.includes(kw) || name.includes(kw))) {
+            return tier;
+          }
         }
+        return 'compute';
+      };
+
+      // Sort resources by tier for left-to-right data flow
+      const sortedResources = [...actualResources].sort((a, b) => {
+        const tierA = TIER_ORDER.indexOf(classifyResource(a));
+        const tierB = TIER_ORDER.indexOf(classifyResource(b));
+        return tierA - tierB;
       });
 
-      // Run layout for this group
-      dagre.layout(subGraph);
+      setLayoutProgress('Distributing across viewport...');
+      await new Promise(r => setTimeout(r, 100));
 
-      // Apply positions relative to parent container
-      groupNodes.forEach(node => {
-        const nodeWithPosition = subGraph.node(node.id);
-        if (nodeWithPosition) {
-          newPositions[node.id] = {
-            x: nodeWithPosition.x - 45,
-            y: nodeWithPosition.y - 35
-          };
-        }
+      const newPositions = {};
+
+      // Position resources in a grid that fills the screen
+      sortedResources.forEach((resource, idx) => {
+        const col = idx % cols;
+        const row = Math.floor(idx / cols);
+        
+        // Center node within cell
+        const x = PADDING + col * finalCellW + (finalCellW - NODE_W) / 2;
+        const y = PADDING + row * finalCellH + (finalCellH - NODE_H) / 2;
+        
+        newPositions[resource.id.toString()] = { x, y };
       });
-    });
 
-    // Save the new positions
-    localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
-    localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
-    setSavedPositions(newPositions);
-    
-    // Reload to apply
-    window.location.reload();
-  }, [nodes, relationships, savedPositions]);
+      setLayoutProgress('Applying layout...');
+      await new Promise(r => setTimeout(r, 100));
+
+      console.log(`✅ AWS Layout: ${resourceCount} resources in ${cols}x${rows} grid (cell: ${Math.round(finalCellW)}x${Math.round(finalCellH)}px)`);
+
+      // Save positions and enable flat layout mode
+      localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
+      localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
+      localStorage.setItem('diagram_flat_layout', 'true');
+      setSavedPositions(newPositions);
+      
+      window.location.reload();
+    } catch (error) {
+      console.error('Layout failed:', error);
+      alert('Layout failed: ' + error.message);
+    } finally {
+      setIsLayoutLoading(false);
+      setLayoutProgress('');
+    }
+  }, [filteredResources, savedPositions]);
 
   const undoAutoLayout = useCallback(() => {
     const previous = localStorage.getItem('diagram_previous_positions');
@@ -661,9 +750,10 @@ function ArchitectureDiagramFlow() {
       return;
     }
 
-    if (confirm('Restore previous layout before auto-layout?')) {
+    if (confirm('Restore previous layout?')) {
       localStorage.setItem('diagram_node_positions', previous);
       localStorage.removeItem('diagram_previous_positions');
+      localStorage.removeItem('diagram_flat_layout');
       window.location.reload();
     }
   }, []);
@@ -832,7 +922,7 @@ function ArchitectureDiagramFlow() {
     }
   };
 
-  // Convert resources to React Flow nodes with hierarchy
+  // Convert resources to React Flow nodes - supports both hierarchical and flat layout modes
   useEffect(() => {
     if (filteredResources.length === 0) {
       setNodes([]);
@@ -840,13 +930,36 @@ function ArchitectureDiagramFlow() {
     }
 
     const flowNodes = [];
-    const accountGroups = {};
     
     // Filter out container-type resources (VPC, subnet, etc.) - they are containers, not resources
     const containerTypes = ['vpc', 'subnet', 'internet-gateway', 'nat-gateway', 'route-table', 'network-acl'];
     const actualResources = filteredResources.filter(r => 
       !containerTypes.includes(r.type?.toLowerCase())
     );
+
+    // FLAT LAYOUT MODE: Clean positioning without parent constraints
+    if (useFlatLayout && Object.keys(savedPositions).length > 0) {
+      console.log('📐 Using flat layout mode with saved positions');
+      
+      actualResources.forEach((resource) => {
+        const resourceId = resource.id.toString();
+        const pos = savedPositions[resourceId] || { x: 100, y: 100 };
+        
+        flowNodes.push({
+          id: resourceId,
+          type: 'resource',
+          position: pos,
+          data: { resource },
+          style: { zIndex: 10 },
+        });
+      });
+      
+      setNodes(flowNodes);
+      return;
+    }
+    
+    // HIERARCHICAL MODE: Nested containers (Account → VPC → Resources)
+    const accountGroups = {};
     
     // Group resources by account and VPC
     actualResources.forEach(resource => {
@@ -919,7 +1032,7 @@ function ArchitectureDiagramFlow() {
             flowNodes.push({
               id: resourceId,
               type: 'resource',
-              position: savedPositions[resourceId] || defaultPosition,
+              position: defaultPosition,
               data: { resource },
               parentNode: vpcNodeId,
               extent: 'parent',
@@ -943,7 +1056,7 @@ function ArchitectureDiagramFlow() {
             flowNodes.push({
               id: resourceId,
               type: 'resource',
-              position: savedPositions[resourceId] || defaultPosition,
+              position: defaultPosition,
               data: { resource },
               parentNode: accountNodeId,
               extent: 'parent',
@@ -978,7 +1091,7 @@ function ArchitectureDiagramFlow() {
     });
 
     setNodes(flowNodes);
-  }, [filteredResources, setNodes, savedPositions]);
+  }, [filteredResources, setNodes, savedPositions, useFlatLayout]);
 
   // Convert relationships to React Flow edges with enhanced styling
   useEffect(() => {
@@ -1240,11 +1353,11 @@ function ArchitectureDiagramFlow() {
             </button>
             <button
               onClick={applyAutoLayout}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
-              title="Standard auto-layout using dagre algorithm"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-600 text-white rounded-lg text-sm font-medium hover:from-orange-600 hover:to-amber-700 shadow-md hover:shadow-lg transition-all"
+              title="Professional AWS Architecture Layout - Groups by service tiers (Entry → Network → Compute → App → Data → Storage)"
             >
               <Sparkles className="w-4 h-4" />
-              Auto-Layout
+              AWS Layout
             </button>
             <button
               onClick={undoAutoLayout}
@@ -1451,8 +1564,25 @@ function ArchitectureDiagramFlow() {
         </div>
       </div>
 
+      {/* Loading Overlay for Layout Progress */}
+      {isLayoutLoading && (
+        <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md text-center border border-gray-200">
+            <div className="relative w-16 h-16 mx-auto mb-4">
+              <div className="absolute inset-0 border-4 border-blue-200 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Optimizing Layout</h3>
+            <p className="text-sm text-gray-600 mb-4">{layoutProgress}</p>
+            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+              <div className="bg-blue-600 h-1.5 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* React Flow Canvas */}
-      <div className="flex-1">
+      <div className="flex-1 relative">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -1502,6 +1632,68 @@ function ArchitectureDiagramFlow() {
             zoomable
             pannable
           />
+
+          {/* AWS Architecture Tier Legend */}
+          <Panel position="top-left" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
+            <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">AWS Data Flow →</div>
+            <div className="flex flex-wrap gap-2">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <span className="text-xs text-gray-600">Entry</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                <span className="text-xs text-gray-600">Network</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span className="text-xs text-gray-600">Compute</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+                <span className="text-xs text-gray-600">App</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                <span className="text-xs text-gray-600">Data</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span className="text-xs text-gray-600">Storage</span>
+              </div>
+            </div>
+          </Panel>
+
+          {/* Relationship Legend */}
+          <Panel position="bottom-left" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
+            <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">Relationships</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-0.5 bg-green-500" />
+                <span className="text-xs text-gray-600">Deploy</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-0.5 bg-orange-500" />
+                <span className="text-xs text-gray-600">Depends</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-0.5 bg-blue-500" />
+                <span className="text-xs text-gray-600">Uses</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-0.5 bg-purple-500" />
+                <span className="text-xs text-gray-600">Connects</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-0.5 bg-pink-500" />
+                <span className="text-xs text-gray-600">Triggers</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-0.5 bg-cyan-500" />
+                <span className="text-xs text-gray-600">Streams</span>
+              </div>
+            </div>
+          </Panel>
         </ReactFlow>
       </div>
 
