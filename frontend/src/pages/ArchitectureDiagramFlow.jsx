@@ -18,11 +18,33 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import dagre from 'dagre';
+import ELK from 'elkjs/lib/elk.bundled.js';
 import { toPng, toJpeg } from 'html-to-image';
 import jsPDF from 'jspdf';
 import GIF from 'gif.js';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// ELK instance for advanced layout
+const elk = new ELK();
+
+// Relationship type colors for visual distinction
+const RELATIONSHIP_COLORS = {
+  deploy_to: '#10B981',      // Green - deployment
+  deployed_with: '#10B981',  // Green - deployment
+  depends_on: '#F59E0B',     // Orange - dependency
+  uses: '#3B82F6',           // Blue - usage
+  connects_to: '#8B5CF6',    // Purple - network
+  triggers: '#EC4899',       // Pink - event
+  streams_to: '#06B6D4',     // Cyan - data flow
+  references: '#6B7280',     // Gray - reference
+  default: '#94A3B8',        // Slate - fallback
+};
+
+const getRelationshipColor = (type) => {
+  const normalizedType = type?.toLowerCase().replace(/[^a-z_]/g, '') || 'default';
+  return RELATIONSHIP_COLORS[normalizedType] || RELATIONSHIP_COLORS.default;
+};
 
 // AWS Service Colors
 const AWS_COLORS = {
@@ -261,9 +283,12 @@ function ArchitectureDiagramFlow() {
   const [uncheckedAccounts, setUncheckedAccounts] = useState(new Set());
   const [uncheckedVPCs, setUncheckedVPCs] = useState(new Set());
   const [uncheckedTypes, setUncheckedTypes] = useState(new Set());
+  const [uncheckedRelTypes, setUncheckedRelTypes] = useState(new Set());
   const [showAccountFilter, setShowAccountFilter] = useState(false);
   const [showVPCFilter, setShowVPCFilter] = useState(false);
   const [showTypeFilter, setShowTypeFilter] = useState(false);
+  const [showRelTypeFilter, setShowRelTypeFilter] = useState(false);
+  const [highlightedNode, setHighlightedNode] = useState(null);
   
   // Get unique values for filters
   const accounts = useMemo(() => {
@@ -308,6 +333,17 @@ function ArchitectureDiagramFlow() {
       return true;
     });
   }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes]);
+
+  // Get unique relationship types for filtering
+  const relationshipTypes = useMemo(() => {
+    const typeSet = new Set(relationships.map(r => r.relationship_type).filter(Boolean));
+    return Array.from(typeSet);
+  }, [relationships]);
+
+  // Filtered relationships based on type filter
+  const filteredRelationships = useMemo(() => {
+    return relationships.filter(r => !uncheckedRelTypes.has(r.relationship_type));
+  }, [relationships, uncheckedRelTypes]);
 
   useEffect(() => {
     fetchResources();
@@ -472,6 +508,68 @@ function ArchitectureDiagramFlow() {
       console.error('AI layout failed:', error);
       alert('AI layout failed. Falling back to standard auto-layout.');
       applyAutoLayout();
+    }
+  }, [nodes, relationships, savedPositions]);
+
+  // ELK-based layout that minimizes edge crossings
+  const applyELKLayout = useCallback(async () => {
+    if (nodes.length === 0) {
+      alert('No nodes to layout.');
+      return;
+    }
+
+    try {
+      // Save current positions for undo
+      setPreviousPositions({...savedPositions});
+
+      const resourceNodes = nodes.filter(n => n.type === 'resource');
+      
+      // Build ELK graph structure
+      const elkGraph = {
+        id: 'root',
+        layoutOptions: {
+          'elk.algorithm': 'layered',
+          'elk.direction': 'RIGHT',
+          'elk.spacing.nodeNode': '80',
+          'elk.layered.spacing.nodeNodeBetweenLayers': '120',
+          'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+          'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+          'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+          'elk.edgeRouting': 'ORTHOGONAL',
+          'elk.layered.mergeEdges': 'true',
+          'elk.layered.mergeHierarchyEdges': 'true',
+        },
+        children: resourceNodes.map(node => ({
+          id: node.id,
+          width: 100,
+          height: 80,
+        })),
+        edges: relationships.map(rel => ({
+          id: `elk-edge-${rel.id}`,
+          sources: [rel.source_resource_id.toString()],
+          targets: [rel.target_resource_id.toString()],
+        })),
+      };
+
+      console.log('🔄 Running ELK layout with crossing minimization...');
+      const layoutedGraph = await elk.layout(elkGraph);
+      
+      const newPositions = {};
+      layoutedGraph.children?.forEach(node => {
+        newPositions[node.id] = { x: node.x || 0, y: node.y || 0 };
+      });
+
+      console.log(`✅ ELK positioned ${Object.keys(newPositions).length} nodes`);
+      
+      // Save positions
+      localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
+      localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
+      setSavedPositions(newPositions);
+      
+      window.location.reload();
+    } catch (error) {
+      console.error('ELK layout failed:', error);
+      alert('ELK layout failed: ' + error.message);
     }
   }, [nodes, relationships, savedPositions]);
 
@@ -884,21 +982,36 @@ function ArchitectureDiagramFlow() {
 
   // Convert relationships to React Flow edges with enhanced styling
   useEffect(() => {
-    if (relationships.length === 0) {
+    if (filteredRelationships.length === 0) {
       console.log('⚠️ No relationships to create edges');
       setEdges([]);
       return;
     }
 
-    console.log(`🔗 Creating edges for ${relationships.length} relationships`);
+    console.log(`🔗 Creating edges for ${filteredRelationships.length} relationships`);
     
     // Get all current node IDs for validation
     const nodeIds = new Set(nodes.map(n => n.id));
     console.log(`📦 Available node IDs:`, Array.from(nodeIds).slice(0, 10), '...');
 
-    const flowEdges = relationships.map((rel) => {
+    // Get connected node IDs for highlighting
+    const connectedToHighlighted = new Set();
+    if (highlightedNode) {
+      filteredRelationships.forEach(rel => {
+        const src = rel.source_resource_id.toString();
+        const tgt = rel.target_resource_id.toString();
+        if (src === highlightedNode || tgt === highlightedNode) {
+          connectedToHighlighted.add(src);
+          connectedToHighlighted.add(tgt);
+        }
+      });
+    }
+
+    const flowEdges = filteredRelationships.map((rel, index) => {
       const sourceId = rel.source_resource_id.toString();
       const targetId = rel.target_resource_id.toString();
+      const relType = rel.relationship_type || 'default';
+      const edgeColor = getRelationshipColor(relType);
       
       // Validate that both nodes exist
       if (!nodeIds.has(sourceId)) {
@@ -908,41 +1021,51 @@ function ArchitectureDiagramFlow() {
         console.warn(`⚠️ Target node ${targetId} not found for relationship ${rel.id}`);
       }
 
+      // Use different edge types to reduce crossing visual confusion
+      // Alternate between smoothstep and bezier for variety
+      const edgeType = index % 3 === 0 ? 'smoothstep' : index % 3 === 1 ? 'default' : 'straight';
+
+      // Highlight edges connected to highlighted node
+      const isHighlighted = highlightedNode && (sourceId === highlightedNode || targetId === highlightedNode);
+      const isDimmed = highlightedNode && !isHighlighted;
+
       return {
         id: `edge-${rel.id}`,
         source: sourceId,
         target: targetId,
-        label: rel.label || rel.relationship_type,
-        type: 'smoothstep',
-        animated: true,
+        label: rel.label || relType,
+        type: edgeType,
+        animated: isHighlighted || relType.includes('deploy') || relType.includes('trigger'),
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: '#3B82F6',
-          width: 20,
-          height: 20,
+          color: isHighlighted ? edgeColor : (isDimmed ? '#E5E7EB' : edgeColor),
+          width: isHighlighted ? 20 : 16,
+          height: isHighlighted ? 20 : 16,
         },
         style: {
-          stroke: '#3B82F6',
-          strokeWidth: 3,
+          stroke: isHighlighted ? edgeColor : (isDimmed ? '#E5E7EB' : edgeColor),
+          strokeWidth: isHighlighted ? 4 : 2,
+          opacity: isDimmed ? 0.2 : 0.8,
+          zIndex: isHighlighted ? 1000 : 1,
         },
         labelStyle: {
-          fill: '#1F2937',
+          fill: isDimmed ? '#9CA3AF' : edgeColor,
           fontWeight: 600,
-          fontSize: 12,
+          fontSize: isHighlighted ? 11 : 9,
         },
         labelBgStyle: {
           fill: '#FFFFFF',
-          fillOpacity: 0.9,
+          fillOpacity: isDimmed ? 0.5 : 0.95,
         },
-        labelBgPadding: [8, 4],
-        labelBgBorderRadius: 4,
+        labelBgPadding: [4, 2],
+        labelBgBorderRadius: 3,
       };
     });
 
     console.log(`✅ Created ${flowEdges.length} edges`);
     console.log('Sample edges:', flowEdges.slice(0, 3));
     setEdges(flowEdges);
-  }, [relationships, nodes, setEdges]);
+  }, [filteredRelationships, nodes, setEdges, highlightedNode]);
 
   const onConnect = useCallback(
     (params) => {
@@ -1108,6 +1231,14 @@ function ArchitectureDiagramFlow() {
               AI Layout
             </button>
             <button
+              onClick={applyELKLayout}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-lg text-sm font-medium hover:from-violet-600 hover:to-purple-700 shadow-md hover:shadow-lg transition-all"
+              title="ELK Layout - Advanced algorithm that minimizes edge crossings"
+            >
+              <Layers className="w-4 h-4" />
+              ELK Layout
+            </button>
+            <button
               onClick={applyAutoLayout}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
               title="Standard auto-layout using dagre algorithm"
@@ -1256,9 +1387,67 @@ function ArchitectureDiagramFlow() {
             )}
           </div>
 
-          <div className="text-sm text-gray-600">
-            Showing {filteredResources.length} of {resources.length} resources
+          {/* Relationship Type Filter */}
+          <div className="relative">
+            <button
+              onClick={() => setShowRelTypeFilter(!showRelTypeFilter)}
+              className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+            >
+              <span className="font-medium text-gray-700">Edges</span>
+              {uncheckedRelTypes.size > 0 && (
+                <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                  {uncheckedRelTypes.size}
+                </span>
+              )}
+            </button>
+            {showRelTypeFilter && (
+              <div className="absolute top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-3 z-50 min-w-[220px] max-h-[300px] overflow-y-auto">
+                <div className="text-xs font-semibold text-gray-500 mb-2 uppercase">Relationship Types</div>
+                {relationshipTypes.map((relType) => (
+                  <label key={relType} className="flex items-center gap-2 py-1.5 hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!uncheckedRelTypes.has(relType)}
+                      onChange={(e) => {
+                        const newSet = new Set(uncheckedRelTypes);
+                        if (e.target.checked) {
+                          newSet.delete(relType);
+                        } else {
+                          newSet.add(relType);
+                        }
+                        setUncheckedRelTypes(newSet);
+                      }}
+                      className="w-4 h-4 rounded"
+                      style={{ accentColor: getRelationshipColor(relType) }}
+                    />
+                    <span 
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: getRelationshipColor(relType) }}
+                    />
+                    <span className="text-sm text-gray-700">{relType}</span>
+                  </label>
+                ))}
+                {relationshipTypes.length === 0 && (
+                  <div className="text-sm text-gray-400 italic">No relationships</div>
+                )}
+              </div>
+            )}
           </div>
+
+          <div className="text-sm text-gray-600">
+            Showing {filteredResources.length} resources • {filteredRelationships.length} edges
+          </div>
+
+          {/* Clear highlight button */}
+          {highlightedNode && (
+            <button
+              onClick={() => setHighlightedNode(null)}
+              className="flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs font-medium hover:bg-amber-200"
+            >
+              <X className="w-3 h-3" />
+              Clear Focus
+            </button>
+          )}
         </div>
       </div>
 
@@ -1272,6 +1461,14 @@ function ArchitectureDiagramFlow() {
           onConnect={onConnect}
           onNodeClick={onNodeClick}
           onNodeDoubleClick={onNodeDoubleClick}
+          onNodeMouseEnter={(event, node) => {
+            if (node.type === 'resource') {
+              setHighlightedNode(node.id);
+            }
+          }}
+          onNodeMouseLeave={() => {
+            setHighlightedNode(null);
+          }}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.1, maxZoom: 1 }}
