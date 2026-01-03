@@ -14,7 +14,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film
+  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network
 } from 'lucide-react';
 import axios from 'axios';
 import dagre from 'dagre';
@@ -77,8 +77,8 @@ function ResourceNode({ data, selected }) {
   const color = getServiceColor(data.resource.type);
   return (
     <div
-      className={`group relative bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 border-2 w-[140px] overflow-hidden ${
-        selected ? 'ring-4 ring-blue-400 ring-opacity-50' : ''
+      className={`group relative bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 border-2 w-[90px] overflow-hidden ${
+        selected ? 'ring-2 ring-blue-400 ring-opacity-50' : ''
       }`}
       style={{ borderColor: selected ? '#3B82F6' : color }}
     >
@@ -86,48 +86,48 @@ function ResourceNode({ data, selected }) {
       <Handle
         type="target"
         position={Position.Left}
-        className="w-3 h-3 !bg-blue-500 border-2 border-white"
+        className="w-2 h-2 !bg-blue-500 border border-white"
       />
       <Handle
         type="source"
         position={Position.Right}
-        className="w-3 h-3 !bg-blue-500 border-2 border-white"
+        className="w-2 h-2 !bg-blue-500 border border-white"
       />
       <Handle
         type="target"
         position={Position.Top}
-        className="w-3 h-3 !bg-blue-500 border-2 border-white"
+        className="w-2 h-2 !bg-blue-500 border border-white"
       />
       <Handle
         type="source"
         position={Position.Bottom}
-        className="w-3 h-3 !bg-blue-500 border-2 border-white"
+        className="w-2 h-2 !bg-blue-500 border border-white"
       />
       
       {/* Gradient Header */}
       <div
-        className="h-1.5"
+        className="h-1"
         style={{
           background: `linear-gradient(90deg, ${color}, ${color}dd)`
         }}
       />
       
-      <div className="p-2.5">
+      <div className="p-1.5">
         {/* Icon and Title */}
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex flex-col items-center gap-1 mb-1">
           <div
-            className="w-8 h-8 rounded-md flex items-center justify-center text-white text-lg shadow-sm flex-shrink-0"
+            className="w-6 h-6 rounded flex items-center justify-center text-white text-sm shadow-sm"
             style={{
               background: `linear-gradient(135deg, ${color}, ${color}cc)`
             }}
           >
             {getServiceEmoji(data.resource.type)}
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold text-xs text-gray-900 truncate" title={data.resource.name}>
+          <div className="w-full text-center">
+            <div className="font-semibold text-[9px] text-gray-900 truncate" title={data.resource.name}>
               {data.resource.name || data.resource.resource_id?.slice(-8)}
             </div>
-            <div className="text-[10px] font-medium text-gray-500">
+            <div className="text-[8px] font-medium text-gray-500 truncate">
               {data.resource.type?.toUpperCase()}
             </div>
           </div>
@@ -135,9 +135,9 @@ function ResourceNode({ data, selected }) {
 
         {/* Status Badge */}
         {data.resource.status && (
-          <div className="flex items-center gap-1 mt-1.5">
+          <div className="flex justify-center mt-1">
             <div
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-medium ${
                 data.resource.status === 'active' || data.resource.status === 'running'
                   ? 'bg-green-100 text-green-700'
                   : 'bg-gray-100 text-gray-600'
@@ -209,12 +209,6 @@ function AccountNode({ data }) {
     </div>
   );
 }
-
-const nodeTypes = {
-  resource: ResourceNode,
-  vpc: VPCNode,
-  account: AccountNode,
-};
 
 function ArchitectureDiagramFlow() {
   const navigate = useNavigate();
@@ -341,6 +335,146 @@ function ArchitectureDiagramFlow() {
     }
   }, []);
 
+  const applyAISuggestedLayout = (resourceNodes, relationships, aiSuggestions) => {
+    const newPositions = {};
+    
+    // Get list of connected resource IDs from AI suggestions
+    const connectedIds = new Set(aiSuggestions.nodes?.map(n => n.id) || []);
+    
+    console.log(`📊 AI Layout: ${connectedIds.size} connected resources, ${resourceNodes.length - connectedIds.size} isolated`);
+    
+    // Only layout resources that have relationships
+    const connectedNodes = resourceNodes.filter(n => connectedIds.has(n.id));
+    
+    if (connectedNodes.length === 0) {
+      console.log('⚠️ No connected resources to layout');
+      return newPositions;
+    }
+    
+    // Group connected nodes by parent
+    const parentGroups = {};
+    connectedNodes.forEach(node => {
+      const parentId = node.parentNode || 'root';
+      if (!parentGroups[parentId]) {
+        parentGroups[parentId] = [];
+      }
+      parentGroups[parentId].push(node);
+    });
+
+    // Apply AI groupings within each parent
+    Object.entries(parentGroups).forEach(([parentId, groupNodes]) => {
+      if (groupNodes.length === 0) return;
+
+      const subGraph = new dagre.graphlib.Graph();
+      subGraph.setDefaultEdgeLabel(() => ({}));
+      
+      // Use AI-suggested layout direction and spacing
+      const layoutConfig = aiSuggestions.layout_config || {};
+      subGraph.setGraph({ 
+        rankdir: layoutConfig.direction || 'LR',
+        nodesep: layoutConfig.node_spacing || 50,
+        ranksep: layoutConfig.rank_spacing || 100,
+        edgesep: 30,
+        marginx: 20,
+        marginy: 20
+      });
+
+      // Add nodes with AI-suggested ranks
+      groupNodes.forEach(node => {
+        const aiNode = aiSuggestions.nodes?.find(n => n.id === node.id);
+        subGraph.setNode(node.id, { 
+          width: 90, 
+          height: 70,
+          rank: aiNode?.rank || 0
+        });
+      });
+
+      // Add edges with AI-suggested weights
+      const groupNodeIds = new Set(groupNodes.map(n => n.id));
+      relationships.forEach(rel => {
+        const sourceId = rel.source_resource_id.toString();
+        const targetId = rel.target_resource_id.toString();
+        if (groupNodeIds.has(sourceId) && groupNodeIds.has(targetId)) {
+          const aiEdge = aiSuggestions.edges?.find(e => 
+            e.source === sourceId && e.target === targetId
+          );
+          subGraph.setEdge(sourceId, targetId, {
+            weight: aiEdge?.weight || 1
+          });
+        }
+      });
+
+      dagre.layout(subGraph);
+
+      // Apply positions for connected nodes only
+      groupNodes.forEach(node => {
+        const nodeWithPosition = subGraph.node(node.id);
+        if (nodeWithPosition) {
+          newPositions[node.id] = {
+            x: nodeWithPosition.x - 45,
+            y: nodeWithPosition.y - 35
+          };
+        }
+      });
+    });
+
+    console.log(`✅ Positioned ${Object.keys(newPositions).length} connected resources`);
+    return newPositions;
+  };
+
+  const applyAILayout = useCallback(async () => {
+    if (nodes.length === 0 || relationships.length === 0) {
+      alert('No relationships found. AI layout works best when resources have connections.');
+      return;
+    }
+
+    try {
+      // Save current positions for undo
+      setPreviousPositions({...savedPositions});
+
+      const resourceNodes = nodes.filter(n => n.type === 'resource');
+      
+      // Prepare data for AI analysis
+      const layoutData = {
+        resources: resourceNodes.map(n => ({
+          id: n.id,
+          name: n.data.resource.name,
+          type: n.data.resource.type,
+          parent: n.parentNode
+        })),
+        relationships: relationships.map(r => ({
+          source: r.source_resource_id.toString(),
+          target: r.target_resource_id.toString(),
+          type: r.relationship_type
+        }))
+      };
+
+      // Call Ollama qwen2.5 for intelligent grouping analysis
+      alert('Analyzing architecture with AI... This may take a few seconds.');
+      
+      const response = await axios.post(`${API_URL}/api/ai/analyze-layout`, layoutData, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
+      });
+
+      const aiSuggestions = response.data;
+      console.log('AI Layout Suggestions:', aiSuggestions);
+
+      // Apply AI-suggested groupings
+      const newPositions = applyAISuggestedLayout(resourceNodes, relationships, aiSuggestions);
+      
+      // Save the new positions
+      localStorage.setItem('diagram_node_positions', JSON.stringify(newPositions));
+      localStorage.setItem('diagram_previous_positions', JSON.stringify(savedPositions));
+      setSavedPositions(newPositions);
+      
+      window.location.reload();
+    } catch (error) {
+      console.error('AI layout failed:', error);
+      alert('AI layout failed. Falling back to standard auto-layout.');
+      applyAutoLayout();
+    }
+  }, [nodes, relationships, savedPositions]);
+
   const applyAutoLayout = useCallback(() => {
     if (nodes.length === 0 || relationships.length === 0) {
       alert('No relationships found. Auto-layout works best when resources have connections.');
@@ -373,18 +507,18 @@ function ArchitectureDiagramFlow() {
       
       subGraph.setGraph({ 
         rankdir: 'TB', // Top to bottom for better fit in containers
-        nodesep: 80,
-        ranksep: 100,
-        edgesep: 40,
-        marginx: 20,
-        marginy: 20
+        nodesep: 50,
+        ranksep: 60,
+        edgesep: 30,
+        marginx: 15,
+        marginy: 15
       });
 
       // Add nodes from this group
       groupNodes.forEach(node => {
         subGraph.setNode(node.id, { 
-          width: 140, 
-          height: 100 
+          width: 90, 
+          height: 70 
         });
       });
 
@@ -406,8 +540,8 @@ function ArchitectureDiagramFlow() {
         const nodeWithPosition = subGraph.node(node.id);
         if (nodeWithPosition) {
           newPositions[node.id] = {
-            x: nodeWithPosition.x - 70,
-            y: nodeWithPosition.y - 50
+            x: nodeWithPosition.x - 45,
+            y: nodeWithPosition.y - 35
           };
         }
       });
@@ -581,6 +715,7 @@ function ArchitectureDiagramFlow() {
       const token = localStorage.getItem('access_token');
       if (!token) {
         console.warn('No auth token found, skipping relationships fetch');
+        navigate('/login');
         return;
       }
       const response = await axios.get(`${API_URL}/api/relationships`, {
@@ -590,7 +725,10 @@ function ArchitectureDiagramFlow() {
     } catch (error) {
       console.error('Failed to fetch relationships:', error);
       if (error.response?.status === 401) {
-        console.warn('Unauthorized - token may be expired');
+        alert('Your session has expired. Please log in again.');
+        localStorage.removeItem('access_token');
+        navigate('/login');
+        return;
       }
       setRelationships([]);
     }
@@ -747,42 +885,64 @@ function ArchitectureDiagramFlow() {
   // Convert relationships to React Flow edges with enhanced styling
   useEffect(() => {
     if (relationships.length === 0) {
+      console.log('⚠️ No relationships to create edges');
       setEdges([]);
       return;
     }
 
-    const flowEdges = relationships.map((rel) => ({
-      id: rel.id.toString(),
-      source: rel.source_resource_id.toString(),
-      target: rel.target_resource_id.toString(),
-      label: rel.label || rel.relationship_type,
-      type: 'smoothstep',
-      animated: true,
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: '#3B82F6',
-        width: 20,
-        height: 20,
-      },
-      style: {
-        stroke: '#3B82F6',
-        strokeWidth: 3,
-      },
-      labelStyle: {
-        fill: '#1F2937',
-        fontWeight: 600,
-        fontSize: 12,
-      },
-      labelBgStyle: {
-        fill: '#FFFFFF',
-        fillOpacity: 0.9,
-      },
-      labelBgPadding: [8, 4],
-      labelBgBorderRadius: 4,
-    }));
+    console.log(`🔗 Creating edges for ${relationships.length} relationships`);
+    
+    // Get all current node IDs for validation
+    const nodeIds = new Set(nodes.map(n => n.id));
+    console.log(`📦 Available node IDs:`, Array.from(nodeIds).slice(0, 10), '...');
 
+    const flowEdges = relationships.map((rel) => {
+      const sourceId = rel.source_resource_id.toString();
+      const targetId = rel.target_resource_id.toString();
+      
+      // Validate that both nodes exist
+      if (!nodeIds.has(sourceId)) {
+        console.warn(`⚠️ Source node ${sourceId} not found for relationship ${rel.id}`);
+      }
+      if (!nodeIds.has(targetId)) {
+        console.warn(`⚠️ Target node ${targetId} not found for relationship ${rel.id}`);
+      }
+
+      return {
+        id: `edge-${rel.id}`,
+        source: sourceId,
+        target: targetId,
+        label: rel.label || rel.relationship_type,
+        type: 'smoothstep',
+        animated: true,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: '#3B82F6',
+          width: 20,
+          height: 20,
+        },
+        style: {
+          stroke: '#3B82F6',
+          strokeWidth: 3,
+        },
+        labelStyle: {
+          fill: '#1F2937',
+          fontWeight: 600,
+          fontSize: 12,
+        },
+        labelBgStyle: {
+          fill: '#FFFFFF',
+          fillOpacity: 0.9,
+        },
+        labelBgPadding: [8, 4],
+        labelBgBorderRadius: 4,
+      };
+    });
+
+    console.log(`✅ Created ${flowEdges.length} edges`);
+    console.log('Sample edges:', flowEdges.slice(0, 3));
     setEdges(flowEdges);
-  }, [relationships, setEdges]);
+  }, [relationships, nodes, setEdges]);
 
   const onConnect = useCallback(
     (params) => {
@@ -842,11 +1002,16 @@ function ArchitectureDiagramFlow() {
         }
       );
 
-      alert('Relationship created successfully!');
+      alert('Relationship created successfully! Applying AI layout...');
       setShowRelationshipModal(false);
       setNewRelationshipData(null);
 
       await fetchRelationships();
+      
+      // Auto-trigger AI layout after creating relationship
+      setTimeout(() => {
+        applyAILayout();
+      }, 500);
     } catch (error) {
       console.error('Failed to create relationship:', error);
       console.error('Error response:', error.response?.data);
@@ -910,9 +1075,42 @@ function ArchitectureDiagramFlow() {
               Export GIF
             </button>
             <button
+              onClick={async () => {
+                if (confirm('Discover relationships from existing resources?\n\nThis will analyze:\n- CloudFormation stacks\n- VPC/Subnet associations\n- Lambda event sources\n- CodePipeline connections\n- ARN references')) {
+                  try {
+                    const token = localStorage.getItem('access_token');
+                    const response = await axios.post(
+                      `${API_URL}/api/relationships/discover`,
+                      {},
+                      { headers: { Authorization: `Bearer ${token}` } }
+                    );
+                    alert(`✅ Success!\n\nDiscovered: ${response.data.discovered} relationships\nImported: ${response.data.imported} new relationships\n\nRefreshing diagram...`);
+                    await fetchRelationships();
+                    setTimeout(() => applyAILayout(), 500);
+                  } catch (error) {
+                    console.error('Discovery failed:', error);
+                    alert('Failed to discover relationships: ' + (error.response?.data?.detail || error.message));
+                  }
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg text-sm font-medium hover:from-green-600 hover:to-emerald-700 shadow-md hover:shadow-lg transition-all"
+              title="Automatically discover relationships from CloudFormation stacks, VPC associations, and more"
+            >
+              <Network className="w-4 h-4" />
+              Discover Relationships
+            </button>
+            <button
+              onClick={applyAILayout}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg text-sm font-medium hover:from-cyan-600 hover:to-blue-700 shadow-md hover:shadow-lg transition-all"
+              title="AI-powered intelligent layout using Ollama qwen2.5 - analyzes relationships and suggests optimal grouping"
+            >
+              <Brain className="w-4 h-4" />
+              AI Layout
+            </button>
+            <button
               onClick={applyAutoLayout}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
-              title="Intelligently arrange resources based on relationships within their containers"
+              title="Standard auto-layout using dagre algorithm"
             >
               <Sparkles className="w-4 h-4" />
               Auto-Layout
@@ -1393,5 +1591,12 @@ function ArchitectureDiagramFlow() {
     </div>
   );
 }
+
+// Define nodeTypes outside component to avoid React Flow warning
+const nodeTypes = {
+  resource: ResourceNode,
+  vpc: VPCNode,
+  account: AccountNode,
+};
 
 export default ArchitectureDiagramFlow;
