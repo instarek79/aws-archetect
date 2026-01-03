@@ -14,7 +14,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network
+  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map
 } from 'lucide-react';
 import axios from 'axios';
 import dagre from 'dagre';
@@ -94,117 +94,165 @@ const getServiceEmoji = (type) => {
   return emojiMap[type?.toLowerCase()] || '📦';
 };
 
-// Custom Node Components with Professional AWS Styling
+// AWS Service Icon URLs (official AWS architecture icons style)
+const AWS_ICONS = {
+  ec2: 'https://icon.icepanel.io/AWS/svg/Compute/EC2.svg',
+  lambda: 'https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg',
+  rds: 'https://icon.icepanel.io/AWS/svg/Database/RDS.svg',
+  aurora: 'https://icon.icepanel.io/AWS/svg/Database/Aurora.svg',
+  dynamodb: 'https://icon.icepanel.io/AWS/svg/Database/DynamoDB.svg',
+  s3: 'https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg',
+  ebs: 'https://icon.icepanel.io/AWS/svg/Storage/Elastic-Block-Store.svg',
+  efs: 'https://icon.icepanel.io/AWS/svg/Storage/EFS.svg',
+  vpc: 'https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/VPC.svg',
+  elb: 'https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/Elastic-Load-Balancing.svg',
+  alb: 'https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/Elastic-Load-Balancing.svg',
+  nlb: 'https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/Elastic-Load-Balancing.svg',
+  cloudfront: 'https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/CloudFront.svg',
+  route53: 'https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/Route-53.svg',
+  apigateway: 'https://icon.icepanel.io/AWS/svg/App-Integration/API-Gateway.svg',
+  sqs: 'https://icon.icepanel.io/AWS/svg/App-Integration/Simple-Queue-Service.svg',
+  sns: 'https://icon.icepanel.io/AWS/svg/App-Integration/Simple-Notification-Service.svg',
+  stepfunctions: 'https://icon.icepanel.io/AWS/svg/App-Integration/Step-Functions.svg',
+  eventbridge: 'https://icon.icepanel.io/AWS/svg/App-Integration/EventBridge.svg',
+  cognito: 'https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Cognito.svg',
+  iam: 'https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/IAM-Identity-Center.svg',
+  kms: 'https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Key-Management-Service.svg',
+  secretsmanager: 'https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Secrets-Manager.svg',
+  waf: 'https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/WAF.svg',
+  cloudwatch: 'https://icon.icepanel.io/AWS/svg/Management-Governance/CloudWatch.svg',
+  cloudtrail: 'https://icon.icepanel.io/AWS/svg/Management-Governance/CloudTrail.svg',
+  cloudformation: 'https://icon.icepanel.io/AWS/svg/Management-Governance/CloudFormation.svg',
+  ecs: 'https://icon.icepanel.io/AWS/svg/Containers/Elastic-Container-Service.svg',
+  eks: 'https://icon.icepanel.io/AWS/svg/Containers/Elastic-Kubernetes-Service.svg',
+  ecr: 'https://icon.icepanel.io/AWS/svg/Containers/Elastic-Container-Registry.svg',
+  fargate: 'https://icon.icepanel.io/AWS/svg/Containers/Fargate.svg',
+  codepipeline: 'https://icon.icepanel.io/AWS/svg/Developer-Tools/CodePipeline.svg',
+  codebuild: 'https://icon.icepanel.io/AWS/svg/Developer-Tools/CodeBuild.svg',
+  codecommit: 'https://icon.icepanel.io/AWS/svg/Developer-Tools/CodeCommit.svg',
+  codedeploy: 'https://icon.icepanel.io/AWS/svg/Developer-Tools/CodeDeploy.svg',
+  kinesis: 'https://icon.icepanel.io/AWS/svg/Analytics/Kinesis.svg',
+  athena: 'https://icon.icepanel.io/AWS/svg/Analytics/Athena.svg',
+  redshift: 'https://icon.icepanel.io/AWS/svg/Analytics/Redshift.svg',
+  elasticache: 'https://icon.icepanel.io/AWS/svg/Database/ElastiCache.svg',
+  default: 'https://icon.icepanel.io/AWS/svg/Compute/EC2.svg',
+};
+
+const getAWSIcon = (type) => {
+  const normalizedType = type?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
+  return AWS_ICONS[normalizedType] || AWS_ICONS.default;
+};
+
+const getServiceDisplayName = (type) => {
+  const nameMap = {
+    ec2: 'Amazon EC2',
+    lambda: 'AWS Lambda',
+    rds: 'Amazon RDS',
+    aurora: 'Amazon Aurora',
+    dynamodb: 'Amazon DynamoDB',
+    s3: 'Amazon S3',
+    ebs: 'Amazon EBS',
+    efs: 'Amazon EFS',
+    vpc: 'Amazon VPC',
+    elb: 'Elastic Load Balancer',
+    alb: 'Application LB',
+    nlb: 'Network LB',
+    cloudfront: 'Amazon CloudFront',
+    route53: 'Amazon Route 53',
+    apigateway: 'API Gateway',
+    sqs: 'Amazon SQS',
+    sns: 'Amazon SNS',
+    stepfunctions: 'Step Functions',
+    eventbridge: 'EventBridge',
+    cognito: 'Amazon Cognito',
+    iam: 'AWS IAM',
+    kms: 'AWS KMS',
+    waf: 'AWS WAF',
+    cloudwatch: 'CloudWatch',
+    cloudtrail: 'CloudTrail',
+    cloudformation: 'CloudFormation',
+    ecs: 'Amazon ECS',
+    eks: 'Amazon EKS',
+    ecr: 'Amazon ECR',
+    fargate: 'AWS Fargate',
+    codepipeline: 'CodePipeline',
+    codebuild: 'CodeBuild',
+    codecommit: 'CodeCommit',
+    codedeploy: 'CodeDeploy',
+    kinesis: 'Amazon Kinesis',
+    elasticache: 'ElastiCache',
+  };
+  return nameMap[type?.toLowerCase()] || type?.toUpperCase() || 'Resource';
+};
+
+// Custom Node Components - Professional AWS Architecture Style
 function ResourceNode({ data, selected }) {
   const color = getServiceColor(data.resource.type);
+  const iconUrl = getAWSIcon(data.resource.type);
+  const serviceName = getServiceDisplayName(data.resource.type);
+  
   return (
-    <div
-      className={`group relative bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 border-2 w-[90px] overflow-hidden ${
-        selected ? 'ring-2 ring-blue-400 ring-opacity-50' : ''
-      }`}
-      style={{ borderColor: selected ? '#3B82F6' : color }}
-    >
-      {/* Connection Handles */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="w-2 h-2 !bg-blue-500 border border-white"
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="w-2 h-2 !bg-blue-500 border border-white"
-      />
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="w-2 h-2 !bg-blue-500 border border-white"
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="w-2 h-2 !bg-blue-500 border border-white"
-      />
+    <div className="group relative flex flex-col items-center">
+      {/* Connection Handles - invisible but functional */}
+      <Handle type="target" position={Position.Left} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
+      <Handle type="source" position={Position.Right} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
+      <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
+      <Handle type="source" position={Position.Bottom} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
       
-      {/* Gradient Header */}
-      <div
-        className="h-1"
-        style={{
-          background: `linear-gradient(90deg, ${color}, ${color}dd)`
-        }}
-      />
-      
-      <div className="p-1.5">
-        {/* Icon and Title */}
-        <div className="flex flex-col items-center gap-1 mb-1">
-          <div
-            className="w-6 h-6 rounded flex items-center justify-center text-white text-sm shadow-sm"
-            style={{
-              background: `linear-gradient(135deg, ${color}, ${color}cc)`
-            }}
-          >
-            {getServiceEmoji(data.resource.type)}
-          </div>
-          <div className="w-full text-center">
-            <div className="font-semibold text-[9px] text-gray-900 truncate" title={data.resource.name}>
-              {data.resource.name || data.resource.resource_id?.slice(-8)}
-            </div>
-            <div className="text-[8px] font-medium text-gray-500 truncate">
-              {data.resource.type?.toUpperCase()}
-            </div>
-          </div>
+      {/* AWS Icon - Large and prominent */}
+      <div 
+        className={`w-16 h-16 rounded-lg bg-white shadow-lg border-2 flex items-center justify-center p-2 transition-all duration-200 hover:shadow-xl hover:scale-105 ${
+          selected ? 'ring-2 ring-blue-500 ring-offset-2' : ''
+        }`}
+        style={{ borderColor: color }}
+      >
+        <img 
+          src={iconUrl} 
+          alt={serviceName}
+          className="w-12 h-12 object-contain"
+          onError={(e) => {
+            e.target.style.display = 'none';
+            e.target.nextSibling.style.display = 'flex';
+          }}
+        />
+        <div 
+          className="w-12 h-12 rounded items-center justify-center text-white text-2xl hidden"
+          style={{ background: color }}
+        >
+          {getServiceEmoji(data.resource.type)}
         </div>
-
-        {/* Status Badge */}
-        {data.resource.status && (
-          <div className="flex justify-center mt-1">
-            <div
-              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-medium ${
-                data.resource.status === 'active' || data.resource.status === 'running'
-                  ? 'bg-green-100 text-green-700'
-                  : 'bg-gray-100 text-gray-600'
-              }`}
-            >
-              <div className={`w-1 h-1 rounded-full ${
-                data.resource.status === 'active' || data.resource.status === 'running'
-                  ? 'bg-green-500 animate-pulse'
-                  : 'bg-gray-400'
-              }`} />
-              {data.resource.status}
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* Hover Effect Border */}
-      <div
-        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-        style={{
-          boxShadow: `0 0 0 2px ${color}40`
-        }}
-      />
+      
+      {/* Service Name Label */}
+      <div className="mt-1 text-center max-w-[120px]">
+        <div className="font-bold text-[11px] text-gray-800 truncate" title={serviceName}>
+          {serviceName}
+        </div>
+        <div className="text-[9px] text-gray-500 truncate italic" title={data.resource.name}>
+          {data.resource.name || data.resource.resource_id?.slice(-12)}
+        </div>
+      </div>
     </div>
   );
 }
 
 function VPCNode({ data }) {
   return (
-    <div
-      className="rounded-xl border-2 border-dashed border-purple-400 bg-gradient-to-br from-purple-50 via-purple-50/50 to-transparent p-4 shadow-inner w-full h-full"
-    >
-      {/* VPC Header */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-lg p-3 shadow-md border border-purple-200 mb-3 inline-flex items-center gap-2">
-        <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-purple-700 rounded-md flex items-center justify-center text-white text-base shadow-lg">
-          🔒
-        </div>
-        <div>
-          <div className="font-bold text-purple-900 text-xs">VPC</div>
-          <div className="text-[10px] text-purple-700 font-mono">
-            {data.name && <span className="font-semibold">{data.name}</span>}
-            {data.name && data.label && <span className="mx-1">•</span>}
-            <span>{data.label}</span>
-          </div>
-        </div>
+    <div className="w-full h-full relative">
+      {/* VPC Container - Dashed border like official diagrams */}
+      <div className="absolute inset-0 rounded-lg border-2 border-dashed border-emerald-500 bg-emerald-50/30" />
+      
+      {/* VPC Header Label */}
+      <div className="absolute -top-3 left-4 flex items-center gap-2 bg-white px-2 py-0.5">
+        <img 
+          src="https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/VPC.svg" 
+          alt="VPC" 
+          className="w-5 h-5"
+        />
+        <span className="text-xs font-bold text-emerald-700">VPC</span>
+        <span className="text-[10px] text-emerald-600 font-mono">
+          {data.name || data.label}
+        </span>
       </div>
     </div>
   );
@@ -212,21 +260,73 @@ function VPCNode({ data }) {
 
 function AccountNode({ data }) {
   return (
-    <div
-      className="rounded-2xl border-3 border-blue-300 bg-gradient-to-br from-blue-50 via-blue-50/30 to-transparent p-6 shadow-xl w-full h-full"
-    >
-      {/* Account Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-4 shadow-lg mb-4 inline-flex items-center gap-3">
-        <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-white text-xl shadow-lg">
-          🏢
-        </div>
+    <div className="w-full h-full relative">
+      {/* AWS Cloud Container - Solid border with cloud styling */}
+      <div className="absolute inset-0 rounded-lg border-2 border-gray-400 bg-gray-50/50" />
+      
+      {/* AWS Cloud Header */}
+      <div className="absolute -top-4 left-4 flex items-center gap-2 bg-white px-3 py-1 rounded border border-gray-300">
+        <svg className="w-6 h-4" viewBox="0 0 80 50" fill="none">
+          <path d="M65 38H20C12 38 5 32 5 24C5 16 12 10 20 10C20 5 26 0 35 0C44 0 52 6 54 14C56 12 60 11 64 12C72 14 78 22 76 30C78 32 80 35 80 38C80 42 77 46 72 46H65V38Z" fill="#252F3E"/>
+          <path d="M35 42L25 32H45L35 42Z" fill="#FF9900"/>
+        </svg>
         <div>
-          <div className="text-[10px] font-medium text-blue-100 uppercase tracking-wider">AWS Account</div>
-          <div className="font-bold text-white text-base">
-            {data.name && <div className="font-semibold">{data.name}</div>}
-            <div className="font-mono text-sm">{data.label}</div>
-          </div>
+          <div className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">AWS Cloud</div>
+          <div className="text-[9px] text-gray-500 font-mono">{data.name || data.label}</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Region Node for hierarchical display
+function RegionNode({ data }) {
+  return (
+    <div className="w-full h-full relative">
+      <div className="absolute inset-0 rounded border-2 border-dashed border-blue-400 bg-blue-50/20" />
+      <div className="absolute -top-3 left-4 flex items-center gap-1 bg-white px-2 py-0.5">
+        <div className="w-4 h-4 bg-blue-500 rounded-sm flex items-center justify-center">
+          <span className="text-white text-[8px] font-bold">R</span>
+        </div>
+        <span className="text-xs font-bold text-blue-700">Region</span>
+        <span className="text-[10px] text-blue-600">{data.label}</span>
+      </div>
+    </div>
+  );
+}
+
+// Availability Zone Node
+function AZNode({ data }) {
+  return (
+    <div className="w-full h-full relative">
+      <div className="absolute inset-0 rounded border border-dashed border-blue-300 bg-blue-50/10" />
+      <div className="absolute -top-2 left-3 bg-white px-2">
+        <span className="text-[10px] font-semibold text-blue-600">Availability Zone {data.label}</span>
+      </div>
+    </div>
+  );
+}
+
+// Subnet Node - Public (green) or Private (blue)
+function SubnetNode({ data }) {
+  const isPublic = data.isPublic || data.label?.toLowerCase().includes('public');
+  const borderColor = isPublic ? 'border-green-500' : 'border-blue-500';
+  const bgColor = isPublic ? 'bg-green-50/40' : 'bg-blue-50/40';
+  const textColor = isPublic ? 'text-green-700' : 'text-blue-700';
+  const labelBg = isPublic ? 'bg-green-500' : 'bg-blue-500';
+  
+  return (
+    <div className="w-full h-full relative">
+      <div className={`absolute inset-0 rounded border-2 ${borderColor} ${bgColor}`} />
+      <div className="absolute -top-2 left-3 flex items-center gap-1">
+        <div className={`${labelBg} px-2 py-0.5 rounded-sm`}>
+          <span className="text-[9px] font-bold text-white">
+            {isPublic ? 'Public subnet' : 'Private subnet'}
+          </span>
+        </div>
+        {data.label && (
+          <span className={`text-[9px] ${textColor} bg-white px-1`}>{data.label}</span>
+        )}
       </div>
     </div>
   );
@@ -293,6 +393,12 @@ function ArchitectureDiagramFlow() {
   const [layoutProgress, setLayoutProgress] = useState('');
   const [useFlatLayout, setUseFlatLayout] = useState(() => {
     return localStorage.getItem('diagram_flat_layout') === 'true';
+  });
+  const [showLegend, setShowLegend] = useState(() => {
+    return localStorage.getItem('diagram_show_legend') !== 'false';
+  });
+  const [showMinimap, setShowMinimap] = useState(() => {
+    return localStorage.getItem('diagram_show_minimap') !== 'false';
   });
   
   // Get unique values for filters
@@ -937,10 +1043,77 @@ function ArchitectureDiagramFlow() {
       !containerTypes.includes(r.type?.toLowerCase())
     );
 
-    // FLAT LAYOUT MODE: Clean positioning without parent constraints
+    // FLAT LAYOUT MODE: Clean positioning with container backgrounds
     if (useFlatLayout && Object.keys(savedPositions).length > 0) {
       console.log('📐 Using flat layout mode with saved positions');
       
+      // Group resources to calculate container boundaries
+      const accountGroups = {};
+      actualResources.forEach(resource => {
+        const accountId = resource.account_id || 'unknown';
+        const vpcId = resource.vpc_id || 'no-vpc';
+        if (!accountGroups[accountId]) accountGroups[accountId] = {};
+        if (!accountGroups[accountId][vpcId]) accountGroups[accountId][vpcId] = [];
+        accountGroups[accountId][vpcId].push(resource);
+      });
+
+      // Calculate bounding boxes for containers based on resource positions
+      Object.entries(accountGroups).forEach(([accountId, vpcs]) => {
+        let accountMinX = Infinity, accountMinY = Infinity;
+        let accountMaxX = 0, accountMaxY = 0;
+        
+        Object.entries(vpcs).forEach(([vpcId, vpcResources]) => {
+          let vpcMinX = Infinity, vpcMinY = Infinity;
+          let vpcMaxX = 0, vpcMaxY = 0;
+          
+          vpcResources.forEach(resource => {
+            const pos = savedPositions[resource.id.toString()] || { x: 100, y: 100 };
+            vpcMinX = Math.min(vpcMinX, pos.x);
+            vpcMinY = Math.min(vpcMinY, pos.y);
+            vpcMaxX = Math.max(vpcMaxX, pos.x + 160);
+            vpcMaxY = Math.max(vpcMaxY, pos.y + 120);
+          });
+          
+          // Add VPC container with padding
+          if (vpcId !== 'no-vpc' && vpcResources.length > 0) {
+            const vpcName = vpcResources[0]?.vpc_name || '';
+            flowNodes.push({
+              id: `vpc-${vpcId}`,
+              type: 'vpc',
+              position: { x: vpcMinX - 30, y: vpcMinY - 50 },
+              data: { label: vpcId, name: vpcName },
+              style: {
+                width: Math.max(200, vpcMaxX - vpcMinX + 60),
+                height: Math.max(150, vpcMaxY - vpcMinY + 80),
+                zIndex: 1,
+              },
+              draggable: false,
+            });
+          }
+          
+          accountMinX = Math.min(accountMinX, vpcMinX - 30);
+          accountMinY = Math.min(accountMinY, vpcMinY - 50);
+          accountMaxX = Math.max(accountMaxX, vpcMaxX + 30);
+          accountMaxY = Math.max(accountMaxY, vpcMaxY + 30);
+        });
+        
+        // Add Account container with padding
+        const accountName = Object.values(vpcs).flat()[0]?.account_name || '';
+        flowNodes.push({
+          id: `account-${accountId}`,
+          type: 'account',
+          position: { x: accountMinX - 40, y: accountMinY - 60 },
+          data: { label: accountId, name: accountName },
+          style: {
+            width: Math.max(300, accountMaxX - accountMinX + 80),
+            height: Math.max(200, accountMaxY - accountMinY + 100),
+            zIndex: 0,
+          },
+          draggable: false,
+        });
+      });
+
+      // Add resource nodes (on top of containers)
       actualResources.forEach((resource) => {
         const resourceId = resource.id.toString();
         const pos = savedPositions[resourceId] || { x: 100, y: 100 };
@@ -1125,6 +1298,7 @@ function ArchitectureDiagramFlow() {
       const targetId = rel.target_resource_id.toString();
       const relType = rel.relationship_type || 'default';
       const edgeColor = getRelationshipColor(relType);
+      const flowNumber = index + 1;
       
       // Validate that both nodes exist
       if (!nodeIds.has(sourceId)) {
@@ -1134,10 +1308,6 @@ function ArchitectureDiagramFlow() {
         console.warn(`⚠️ Target node ${targetId} not found for relationship ${rel.id}`);
       }
 
-      // Use different edge types to reduce crossing visual confusion
-      // Alternate between smoothstep and bezier for variety
-      const edgeType = index % 3 === 0 ? 'smoothstep' : index % 3 === 1 ? 'default' : 'straight';
-
       // Highlight edges connected to highlighted node
       const isHighlighted = highlightedNode && (sourceId === highlightedNode || targetId === highlightedNode);
       const isDimmed = highlightedNode && !isHighlighted;
@@ -1146,32 +1316,32 @@ function ArchitectureDiagramFlow() {
         id: `edge-${rel.id}`,
         source: sourceId,
         target: targetId,
-        label: rel.label || relType,
-        type: edgeType,
-        animated: isHighlighted || relType.includes('deploy') || relType.includes('trigger'),
+        // Show flow number in circle like AWS diagrams
+        label: `${flowNumber}`,
+        type: 'smoothstep',
+        animated: false,
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: isHighlighted ? edgeColor : (isDimmed ? '#E5E7EB' : edgeColor),
-          width: isHighlighted ? 20 : 16,
-          height: isHighlighted ? 20 : 16,
+          color: isHighlighted ? '#000000' : (isDimmed ? '#E5E7EB' : '#374151'),
+          width: 12,
+          height: 12,
         },
         style: {
-          stroke: isHighlighted ? edgeColor : (isDimmed ? '#E5E7EB' : edgeColor),
-          strokeWidth: isHighlighted ? 4 : 2,
-          opacity: isDimmed ? 0.2 : 0.8,
-          zIndex: isHighlighted ? 1000 : 1,
+          stroke: isHighlighted ? '#000000' : (isDimmed ? '#E5E7EB' : '#374151'),
+          strokeWidth: isHighlighted ? 2.5 : 1.5,
+          opacity: isDimmed ? 0.15 : 1,
         },
         labelStyle: {
-          fill: isDimmed ? '#9CA3AF' : edgeColor,
-          fontWeight: 600,
-          fontSize: isHighlighted ? 11 : 9,
+          fill: '#FFFFFF',
+          fontWeight: 700,
+          fontSize: 10,
         },
         labelBgStyle: {
-          fill: '#FFFFFF',
-          fillOpacity: isDimmed ? 0.5 : 0.95,
+          fill: isHighlighted ? '#FF9900' : (isDimmed ? '#D1D5DB' : '#FF9900'),
+          fillOpacity: 1,
         },
-        labelBgPadding: [4, 2],
-        labelBgBorderRadius: 3,
+        labelBgPadding: [6, 6],
+        labelBgBorderRadius: 50,
       };
     });
 
@@ -1374,6 +1544,38 @@ function ArchitectureDiagramFlow() {
             >
               <RefreshCw className="w-4 h-4" />
               Reset Layout
+            </button>
+            <button
+              onClick={() => {
+                const newState = !showLegend;
+                setShowLegend(newState);
+                localStorage.setItem('diagram_show_legend', newState.toString());
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
+                showLegend 
+                  ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+              title={showLegend ? "Hide legend panels" : "Show legend panels"}
+            >
+              <Eye className={`w-4 h-4 ${!showLegend ? 'opacity-50' : ''}`} />
+              Legend
+            </button>
+            <button
+              onClick={() => {
+                const newState = !showMinimap;
+                setShowMinimap(newState);
+                localStorage.setItem('diagram_show_minimap', newState.toString());
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
+                showMinimap 
+                  ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+              title={showMinimap ? "Hide minimap preview" : "Show minimap preview"}
+            >
+              <Map className={`w-4 h-4 ${!showMinimap ? 'opacity-50' : ''}`} />
+              Minimap
             </button>
             <button
               onClick={() => navigate('/resources')}
@@ -1611,30 +1813,34 @@ function ArchitectureDiagramFlow() {
           }}
         >
           <Background 
-            color="#E5E7EB" 
-            gap={20} 
-            size={1.5}
-            variant="dots"
+            color="#F3F4F6" 
+            gap={30} 
+            size={1}
+            variant="lines"
+            style={{ backgroundColor: '#FAFBFC' }}
           />
           <Controls 
             showInteractive={false}
             className="bg-white shadow-lg rounded-lg border border-gray-200"
           />
-          <MiniMap
-            nodeColor={(node) => {
-              if (node.type === 'account') return '#3B82F6';
-              if (node.type === 'vpc') return '#8B5CF6';
-              return node.data?.resource?.type ? getServiceColor(node.data.resource.type) : '#6B7280';
-            }}
-            nodeStrokeWidth={3}
-            maskColor="rgba(0, 0, 0, 0.1)"
-            className="bg-white shadow-lg rounded-lg border border-gray-200"
-            zoomable
-            pannable
-          />
+          {showMinimap && (
+            <MiniMap
+              nodeColor={(node) => {
+                if (node.type === 'account') return '#3B82F6';
+                if (node.type === 'vpc') return '#8B5CF6';
+                return node.data?.resource?.type ? getServiceColor(node.data.resource.type) : '#6B7280';
+              }}
+              nodeStrokeWidth={3}
+              maskColor="rgba(0, 0, 0, 0.1)"
+              className="bg-white shadow-lg rounded-lg border border-gray-200"
+              zoomable
+              pannable
+            />
+          )}
 
           {/* AWS Architecture Tier Legend */}
-          <Panel position="top-left" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
+          {showLegend && (
+            <Panel position="top-left" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
             <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">AWS Data Flow →</div>
             <div className="flex flex-wrap gap-2">
               <div className="flex items-center gap-1.5">
@@ -1662,38 +1868,41 @@ function ArchitectureDiagramFlow() {
                 <span className="text-xs text-gray-600">Storage</span>
               </div>
             </div>
-          </Panel>
+            </Panel>
+          )}
 
           {/* Relationship Legend */}
-          <Panel position="bottom-left" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
-            <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">Relationships</div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-green-500" />
-                <span className="text-xs text-gray-600">Deploy</span>
+          {showLegend && (
+            <Panel position="bottom-left" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
+              <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">Relationships</div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-green-500" />
+                  <span className="text-xs text-gray-600">Deploy</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-orange-500" />
+                  <span className="text-xs text-gray-600">Depends</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-blue-500" />
+                  <span className="text-xs text-gray-600">Uses</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-purple-500" />
+                  <span className="text-xs text-gray-600">Connects</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-pink-500" />
+                  <span className="text-xs text-gray-600">Triggers</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-cyan-500" />
+                  <span className="text-xs text-gray-600">Streams</span>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-orange-500" />
-                <span className="text-xs text-gray-600">Depends</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-blue-500" />
-                <span className="text-xs text-gray-600">Uses</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-purple-500" />
-                <span className="text-xs text-gray-600">Connects</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-pink-500" />
-                <span className="text-xs text-gray-600">Triggers</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-cyan-500" />
-                <span className="text-xs text-gray-600">Streams</span>
-              </div>
-            </div>
-          </Panel>
+            </Panel>
+          )}
         </ReactFlow>
       </div>
 
@@ -1986,6 +2195,9 @@ const nodeTypes = {
   resource: ResourceNode,
   vpc: VPCNode,
   account: AccountNode,
+  region: RegionNode,
+  az: AZNode,
+  subnet: SubnetNode,
 };
 
 export default ArchitectureDiagramFlow;
