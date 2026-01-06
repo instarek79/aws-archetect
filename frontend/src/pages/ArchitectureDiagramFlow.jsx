@@ -607,7 +607,7 @@ function ArchitectureDiagramFlow() {
       
       const response = await axios.post(`${API_URL}/api/ai/analyze-layout`, layoutData, {
         headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
-        timeout: 120000 // 2 minute timeout
+        timeout: 300000 // 5 minute timeout for qwen2.5
       });
 
       setLayoutProgress('🤖 Processing AI suggestions...');
@@ -632,10 +632,13 @@ function ArchitectureDiagramFlow() {
       window.location.reload();
     } catch (error) {
       console.error('AI layout failed:', error);
+      const errorMsg = error.code === 'ECONNABORTED' 
+        ? 'AI service timeout - Ollama may not be running or is overloaded.\n\nTry: AWS Layout button instead.'
+        : 'AI layout failed: ' + (error.response?.data?.detail || error.message);
+      alert(errorMsg);
+    } finally {
       setIsLayoutLoading(false);
       setLayoutProgress('');
-      alert('AI layout failed: ' + (error.response?.data?.detail || error.message) + '\n\nFalling back to AWS layout.');
-      applyAutoLayout();
     }
   }, [nodes, relationships, savedPositions]);
 

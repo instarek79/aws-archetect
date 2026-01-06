@@ -105,7 +105,7 @@ Return ONLY valid JSON:
         print(f"🤖 Calling Ollama qwen2.5 for layout analysis...")
         print(f"📊 Analyzing {len(resources)} resources and {len(relationships)} relationships")
         
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{ollama_base}/api/generate",
                 json={
