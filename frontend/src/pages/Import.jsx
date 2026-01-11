@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle, Database, Sparkles, ArrowRight, X, Terminal, FileText, Download, Server, HardDrive, Cloud, Layers, Link2, GitBranch } from 'lucide-react';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 

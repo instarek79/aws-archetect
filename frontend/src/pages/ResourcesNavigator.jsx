@@ -7,7 +7,7 @@ import {
   Link2, Unlink, Eye, Layers, Target, Circle, ArrowRight,
   Info, ExternalLink, RefreshCw, Home, Settings, Sparkles
 } from 'lucide-react';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import { AWSIcon, getServiceColor, AWS_SERVICE_COLORS } from '../components/AWSIcons';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import axios from 'axios';
-import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles, Network, CheckSquare, Square, Settings, Filter, Search, X, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, Copy, ExternalLink, MoreHorizontal, Download, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import axios from '../utils/axiosConfig';
+import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles, Network, CheckSquare, Square, Settings, Filter, Search, X, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, Copy, ExternalLink, MoreHorizontal, Download, RefreshCw, SlidersHorizontal, Cloud } from 'lucide-react';
 import ResourceModal from '../components/ResourceModal';
+import AWSConnectModal from '../components/AWSConnectModal';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -93,6 +94,7 @@ function Resources() {
   const [modalMode, setModalMode] = useState('add');
   const [selectedResource, setSelectedResource] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
+  const [showAWSConnectModal, setShowAWSConnectModal] = useState(false);
   
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -921,6 +923,14 @@ function Resources() {
               Add Resource
             </button>
             <button
+              onClick={() => setShowAWSConnectModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 text-sm"
+              title="Connect to AWS and scan resources"
+            >
+              <Cloud className="w-4 h-4" />
+              Connect to AWS
+            </button>
+            <button
               onClick={fetchResources}
               className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-gray-50"
               title="Refresh"
@@ -1583,6 +1593,16 @@ function Resources() {
         onSave={handleSaveResource}
         resource={selectedResource}
         mode={modalMode}
+      />
+
+      <AWSConnectModal
+        isOpen={showAWSConnectModal}
+        onClose={() => setShowAWSConnectModal(false)}
+        onScanComplete={(results) => {
+          setSuccessMessage(`✅ AWS Scan Complete! Imported ${results.import_stats?.created || 0} new resources, updated ${results.import_stats?.updated || 0} existing resources.`);
+          fetchResources();
+          setTimeout(() => setSuccessMessage(''), 5000);
+        }}
       />
     </div>
   );

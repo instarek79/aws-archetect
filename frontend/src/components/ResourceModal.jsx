@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Wand2, Plus, Trash2 } from 'lucide-react';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import TypeSpecificFields from './TypeSpecificFields';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

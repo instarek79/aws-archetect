@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ReactFlow, {
   MiniMap,
@@ -11,17 +11,25 @@ import ReactFlow, {
   Panel,
   Handle,
   Position,
+  useReactFlow,
+  ReactFlowProvider,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map
+  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map, Plus, Code, FileCode, DollarSign, AlertTriangle, BookTemplate, Settings
 } from 'lucide-react';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import dagre from 'dagre';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { toPng, toJpeg } from 'html-to-image';
 import jsPDF from 'jspdf';
 import GIF from 'gif.js';
+import ResourcePalette from '../components/ResourcePalette';
+import ResourceConfigPanel from '../components/ResourceConfigPanel';
+import TemplateLibrary from '../components/TemplateLibrary';
+import ValidationPanel from '../components/ValidationPanel';
+import { calculateTotalCost, formatCost } from '../utils/costEstimation';
+import { generateCloudFormation, generateTerraform } from '../utils/iacExport';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -335,6 +343,8 @@ function SubnetNode({ data }) {
 function ArchitectureDiagramFlow() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const reactFlowWrapper = useRef(null);
+  const { project } = useReactFlow();
   
   const [resources, setResources] = useState([]);
   const [relationships, setRelationships] = useState([]);
@@ -342,6 +352,15 @@ function ArchitectureDiagramFlow() {
   
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  
+  const [showResourcePalette, setShowResourcePalette] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState('cloudformation');
+  const [showConfigPanel, setShowConfigPanel] = useState(false);
+  const [configResource, setConfigResource] = useState(null);
+  const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
+  const [estimatedCost, setEstimatedCost] = useState(0);
 
   const saveNodePositions = useCallback((nodes) => {
     try {
@@ -1296,20 +1315,19 @@ function ArchitectureDiagramFlow() {
       });
     }
 
-    const flowEdges = filteredRelationships.map((rel, index) => {
+    // Filter to only relationships where both nodes exist
+    const validRelationships = filteredRelationships.filter(rel => {
+      const sourceId = rel.source_resource_id.toString();
+      const targetId = rel.target_resource_id.toString();
+      return nodeIds.has(sourceId) && nodeIds.has(targetId);
+    });
+
+    const flowEdges = validRelationships.map((rel, index) => {
       const sourceId = rel.source_resource_id.toString();
       const targetId = rel.target_resource_id.toString();
       const relType = rel.relationship_type || 'default';
       const edgeColor = getRelationshipColor(relType);
       const flowNumber = index + 1;
-      
-      // Validate that both nodes exist
-      if (!nodeIds.has(sourceId)) {
-        console.warn(`⚠️ Source node ${sourceId} not found for relationship ${rel.id}`);
-      }
-      if (!nodeIds.has(targetId)) {
-        console.warn(`⚠️ Target node ${targetId} not found for relationship ${rel.id}`);
-      }
 
       // Highlight edges connected to highlighted node
       const isHighlighted = highlightedNode && (sourceId === highlightedNode || targetId === highlightedNode);
@@ -1352,6 +1370,97 @@ function ArchitectureDiagramFlow() {
     console.log('Sample edges:', flowEdges.slice(0, 3));
     setEdges(flowEdges);
   }, [filteredRelationships, nodes, setEdges, highlightedNode]);
+
+  // Calculate cost estimation
+  useEffect(() => {
+    const cost = calculateTotalCost(filteredResources);
+    setEstimatedCost(cost);
+  }, [filteredResources]);
+
+  // Handle saving configured resource
+  const handleSaveResource = async (resourceData) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await axios.post(
+        `${API_URL}/api/resources`,
+        resourceData,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      // Add to diagram
+      const newNode = {
+        id: response.data.id.toString(),
+        type: 'resource',
+        position: configResource.position,
+        data: { resource: response.data },
+      };
+      
+      setNodes((nds) => nds.concat(newNode));
+      setShowConfigPanel(false);
+      setConfigResource(null);
+      
+      // Refresh resources
+      fetchResources();
+    } catch (error) {
+      console.error('Failed to save resource:', error);
+      alert('Failed to save resource: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  // Handle applying template
+  const handleApplyTemplate = async (template) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const createdResources = [];
+      
+      // Create all resources
+      for (const templateResource of template.resources) {
+        const resourceData = {
+          name: templateResource.name,
+          type: templateResource.type,
+          environment: 'development',
+          region: 'us-east-1',
+          tags: { Template: template.name },
+        };
+        
+        const response = await axios.post(
+          `${API_URL}/api/resources`,
+          resourceData,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        
+        createdResources.push({
+          ...response.data,
+          position: templateResource.position,
+        });
+      }
+      
+      // Create relationships
+      for (const rel of template.relationships) {
+        const sourceId = createdResources[rel.source].id;
+        const targetId = createdResources[rel.target].id;
+        
+        await axios.post(
+          `${API_URL}/api/relationships`,
+          {
+            source_resource_id: sourceId,
+            target_resource_id: targetId,
+            relationship_type: rel.type,
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+      }
+      
+      // Refresh diagram
+      await fetchResources();
+      await fetchRelationships();
+      
+      alert(`✅ Template "${template.name}" applied successfully!\n\nCreated ${createdResources.length} resources and ${template.relationships.length} relationships.`);
+    } catch (error) {
+      console.error('Failed to apply template:', error);
+      alert('Failed to apply template: ' + (error.response?.data?.detail || error.message));
+    }
+  };
 
   const onConnect = useCallback(
     (params) => {
@@ -1482,6 +1591,50 @@ function ArchitectureDiagramFlow() {
             >
               <Film className="w-4 h-4" />
               Export GIF
+            </button>
+            <button
+              onClick={() => setShowResourcePalette(!showResourcePalette)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
+                showResourcePalette 
+                  ? 'bg-orange-500 text-white hover:bg-orange-600' 
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+              title="Toggle Resource Palette"
+            >
+              <Plus className="w-4 h-4" />
+              Add Resources
+            </button>
+            <button
+              onClick={() => setShowTemplateLibrary(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-pink-700 shadow-md hover:shadow-lg transition-all"
+              title="Apply pre-built architecture templates"
+            >
+              <BookTemplate className="w-4 h-4" />
+              Templates
+            </button>
+            <button
+              onClick={() => setShowValidation(!showValidation)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
+                showValidation
+                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+              title="Validate architecture and show best practices"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              Validate
+            </button>
+            <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg text-sm font-medium shadow-md" title="Estimated monthly AWS cost">
+              <DollarSign className="w-4 h-4" />
+              <span className="font-bold">{formatCost(estimatedCost)}/mo</span>
+            </div>
+            <button
+              onClick={() => setShowExportModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
+              title="Export to CloudFormation or Terraform"
+            >
+              <FileCode className="w-4 h-4" />
+              Export IaC
             </button>
             <button
               onClick={async () => {
@@ -1786,8 +1939,49 @@ function ArchitectureDiagramFlow() {
         </div>
       )}
 
+      {/* Resource Palette */}
+      <ResourcePalette 
+        isOpen={showResourcePalette}
+        onToggle={() => setShowResourcePalette(!showResourcePalette)}
+        onAddResource={(serviceType, serviceName) => {
+          console.log('Add resource:', serviceType, serviceName);
+        }}
+      />
+
       {/* React Flow Canvas */}
-      <div className="flex-1 relative">
+      <div 
+        className="flex-1 relative"
+        ref={reactFlowWrapper}
+        onDrop={(event) => {
+          event.preventDefault();
+          const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
+          const data = JSON.parse(event.dataTransfer.getData('application/reactflow'));
+          
+          if (data.type === 'resource') {
+            const position = project({
+              x: event.clientX - reactFlowBounds.left,
+              y: event.clientY - reactFlowBounds.top,
+            });
+            
+            // Show configuration panel for new resource
+            setConfigResource({
+              id: `new-${Date.now()}`,
+              name: `New ${data.serviceName}`,
+              type: data.serviceType,
+              position,
+              environment: 'development',
+              region: 'us-east-1',
+              tags: {},
+              type_specific_properties: {},
+            });
+            setShowConfigPanel(true);
+          }
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+        }}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -1908,6 +2102,110 @@ function ArchitectureDiagramFlow() {
           )}
         </ReactFlow>
       </div>
+
+      {/* Export IaC Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900">Export Infrastructure as Code</h3>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-sm text-gray-600 mb-4">
+                Export your architecture diagram as CloudFormation or Terraform code.
+              </p>
+              
+              <div className="flex gap-4 mb-6">
+                <button
+                  onClick={() => setExportFormat('cloudformation')}
+                  className={`flex-1 p-4 rounded-lg border-2 transition-all ${
+                    exportFormat === 'cloudformation'
+                      ? 'border-orange-500 bg-orange-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Code className="w-6 h-6 text-orange-500" />
+                    <div className="text-left">
+                      <div className="font-bold text-gray-900">CloudFormation</div>
+                      <div className="text-xs text-gray-500">AWS native IaC (YAML)</div>
+                    </div>
+                  </div>
+                </button>
+                
+                <button
+                  onClick={() => setExportFormat('terraform')}
+                  className={`flex-1 p-4 rounded-lg border-2 transition-all ${
+                    exportFormat === 'terraform'
+                      ? 'border-purple-500 bg-purple-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <FileCode className="w-6 h-6 text-purple-500" />
+                    <div className="text-left">
+                      <div className="font-bold text-gray-900">Terraform</div>
+                      <div className="text-xs text-gray-500">Multi-cloud IaC (HCL)</div>
+                    </div>
+                  </div>
+                </button>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                <h4 className="font-semibold text-sm text-gray-700 mb-2">Preview:</h4>
+                <div className="bg-white rounded border border-gray-200 p-3 font-mono text-xs text-gray-600 max-h-60 overflow-y-auto">
+                  <pre>{exportFormat === 'cloudformation' 
+                    ? generateCloudFormation(filteredResources, filteredRelationships).substring(0, 500) + '...'
+                    : generateTerraform(filteredResources, filteredRelationships).substring(0, 500) + '...'
+                  }</pre>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  {filteredResources.length} resources • {filteredRelationships.length} relationships
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const code = exportFormat === 'cloudformation'
+                    ? generateCloudFormation(filteredResources, filteredRelationships)
+                    : generateTerraform(filteredResources, filteredRelationships);
+                  
+                  const filename = exportFormat === 'cloudformation' ? 'template.json' : 'main.tf';
+                  const blob = new Blob([code], { type: 'text/plain' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = filename;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  
+                  setShowExportModal(false);
+                  alert(`✅ Exported ${filteredResources.length} resources as ${exportFormat === 'cloudformation' ? 'CloudFormation' : 'Terraform'}!\n\nFile: ${filename}`);
+                }}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg hover:from-purple-600 hover:to-indigo-700 font-medium"
+              >
+                <FileCode className="w-4 h-4 inline mr-2" />
+                Download {exportFormat === 'cloudformation' ? 'CloudFormation' : 'Terraform'}
+              </button>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Relationship Creation Modal */}
       {showRelationshipModal && newRelationshipData && (
@@ -2189,6 +2487,33 @@ function ArchitectureDiagramFlow() {
           </div>
         </div>
       )}
+
+      {/* Resource Configuration Panel */}
+      {showConfigPanel && configResource && (
+        <ResourceConfigPanel
+          resource={configResource}
+          onSave={handleSaveResource}
+          onCancel={() => {
+            setShowConfigPanel(false);
+            setConfigResource(null);
+          }}
+        />
+      )}
+
+      {/* Template Library */}
+      <TemplateLibrary
+        isOpen={showTemplateLibrary}
+        onClose={() => setShowTemplateLibrary(false)}
+        onSelectTemplate={handleApplyTemplate}
+      />
+
+      {/* Validation Panel */}
+      <ValidationPanel
+        resources={filteredResources}
+        relationships={filteredRelationships}
+        isOpen={showValidation}
+        onClose={() => setShowValidation(false)}
+      />
     </div>
   );
 }
@@ -2203,4 +2528,13 @@ const nodeTypes = {
   subnet: SubnetNode,
 };
 
-export default ArchitectureDiagramFlow;
+// Wrap with ReactFlowProvider for drag-and-drop support
+function ArchitectureDiagramFlowWrapper() {
+  return (
+    <ReactFlowProvider>
+      <ArchitectureDiagramFlow />
+    </ReactFlowProvider>
+  );
+}
+
+export default ArchitectureDiagramFlowWrapper;

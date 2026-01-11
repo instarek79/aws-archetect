@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.database import engine, Base
-from app.routers import auth, resources, ai, import_router, relationships, ai_layout, relationship_discovery
+from app.routers import auth, resources, ai, import_router, relationships, ai_layout, relationship_discovery, iac_export, aws_connect
 import logging
 
 # Configure logging
@@ -41,6 +41,8 @@ app.include_router(ai_layout.router, prefix="/api")
 app.include_router(import_router.router, prefix="/api")
 app.include_router(relationships.router, prefix="/api")
 app.include_router(relationship_discovery.router, prefix="/api")
+app.include_router(iac_export.router, prefix="/api")
+app.include_router(aws_connect.router, prefix="/api")
 
 
 @app.get("/health")

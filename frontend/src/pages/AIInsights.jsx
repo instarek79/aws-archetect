@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import { Sparkles, Send, Download, Globe, LogOut, Loader, Database, FileText } from 'lucide-react';
 import jsPDF from 'jspdf';
 

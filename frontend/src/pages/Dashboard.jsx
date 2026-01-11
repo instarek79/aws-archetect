@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity, Upload, Shield, Cloud, Layers, BarChart3, TrendingUp, AlertTriangle, CheckCircle, Clock, Eye, DollarSign, Compass } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

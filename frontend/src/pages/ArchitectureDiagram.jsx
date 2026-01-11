@@ -7,7 +7,7 @@ import {
   LayoutDashboard, LogOut, Cloud, Box, GitBranch, Activity, Wifi,
   ZoomIn, ZoomOut, Move, X, Eye, EyeOff
 } from 'lucide-react';
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import { AWS_ICONS, getServiceColor as getAWSServiceColor } from '../components/AWSIcons';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
