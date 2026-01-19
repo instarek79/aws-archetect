@@ -263,6 +263,21 @@ async def get_supported_resources():
                 "type": "codepipeline",
                 "name": "CodePipeline",
                 "description": "CI/CD pipelines"
+            },
+            {
+                "type": "route53",
+                "name": "Route53 Hosted Zones",
+                "description": "DNS hosted zones and records"
+            },
+            {
+                "type": "cloudfront",
+                "name": "CloudFront Distributions",
+                "description": "Content delivery network distributions"
+            },
+            {
+                "type": "amazonmq",
+                "name": "Amazon MQ Brokers",
+                "description": "Managed message broker service"
             }
         ]
     }

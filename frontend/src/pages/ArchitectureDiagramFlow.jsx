@@ -16,7 +16,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map, Plus, Code, FileCode, DollarSign, AlertTriangle, BookTemplate, Settings
+  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map, Plus, Code, FileCode, DollarSign, AlertTriangle, BookTemplate, Settings, ChevronDown
 } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 import dagre from 'dagre';
@@ -143,12 +143,15 @@ const AWS_ICONS = {
   athena: 'https://icon.icepanel.io/AWS/svg/Analytics/Athena.svg',
   redshift: 'https://icon.icepanel.io/AWS/svg/Analytics/Redshift.svg',
   elasticache: 'https://icon.icepanel.io/AWS/svg/Database/ElastiCache.svg',
+  amazonmq: 'https://icon.icepanel.io/AWS/svg/App-Integration/MQ.svg',
   default: 'https://icon.icepanel.io/AWS/svg/Compute/EC2.svg',
 };
 
 const getAWSIcon = (type) => {
   const normalizedType = type?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
-  return AWS_ICONS[normalizedType] || AWS_ICONS.default;
+  const externalUrl = AWS_ICONS[normalizedType] || AWS_ICONS.default;
+  // Proxy through backend to avoid CORS issues during PNG/PDF export
+  return `${API_URL}/api/icons/proxy?url=${encodeURIComponent(externalUrl)}`;
 };
 
 const getServiceDisplayName = (type) => {
@@ -361,6 +364,11 @@ function ArchitectureDiagramFlow() {
   const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
   const [estimatedCost, setEstimatedCost] = useState(0);
+  
+  // Dropdown menu states
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const [showEditMenu, setShowEditMenu] = useState(false);
+  const [showViewMenu, setShowViewMenu] = useState(false);
 
   const saveNodePositions = useCallback((nodes) => {
     try {
@@ -439,29 +447,51 @@ function ArchitectureDiagramFlow() {
   }, [resources, accounts, uncheckedAccounts]);
   
   // Types filtered by selected accounts and VPCs (cascading)
+  // Static list of all AWS resource types (always visible in filter)
   const types = useMemo(() => {
-    const visibleAccounts = accounts.filter(acc => !uncheckedAccounts.has(acc));
-    const visibleVPCs = vpcs.filter(vpc => !uncheckedVPCs.has(vpc));
-    const typeSet = new Set(
-      resources
-        .filter(r => 
-          visibleAccounts.includes(r.account_id) &&
-          (visibleVPCs.length === 0 || visibleVPCs.includes(r.vpc_id))
-        )
-        .map(r => r.type)
-        .filter(Boolean)
-    );
-    return Array.from(typeSet);
-  }, [resources, accounts, vpcs, uncheckedAccounts, uncheckedVPCs]);
+    return [
+      'ec2', 'rds', 'aurora', 'lambda', 's3', 'dynamodb', 'elasticache',
+      'elb', 'alb', 'nlb', 'vpc', 'subnet', 'internet-gateway', 'nat-gateway',
+      'ecs', 'eks', 'ecr', 'fargate',
+      'sns', 'sqs', 'apigateway', 'eventbridge', 'stepfunctions',
+      'cloudfront', 'route53', 'waf',
+      'cognito', 'iam', 'kms', 'secretsmanager',
+      'cloudwatch', 'cloudtrail', 'cloudformation',
+      'codepipeline', 'codebuild', 'codecommit', 'codedeploy',
+      'kinesis', 'athena', 'redshift',
+      'amazonmq', 'ebs', 'efs'
+    ];
+  }, []);
   
   // Filtered resources - show all except unchecked items
   const filteredResources = useMemo(() => {
-    return resources.filter(r => {
+    // Count resources by type
+    const typeCounts = {};
+    resources.forEach(r => {
+      typeCounts[r.type] = (typeCounts[r.type] || 0) + 1;
+    });
+    
+    // Count resources with/without VPC
+    const withVpc = resources.filter(r => r.vpc_id).length;
+    const withoutVpc = resources.filter(r => !r.vpc_id).length;
+    
+    const filtered = resources.filter(r => {
       if (uncheckedAccounts.has(r.account_id)) return false;
-      if (uncheckedVPCs.has(r.vpc_id)) return false;
+      // Only filter by VPC if resource HAS a VPC (don't filter global services like S3, CodePipeline, etc.)
+      if (r.vpc_id && uncheckedVPCs.has(r.vpc_id)) return false;
       if (uncheckedTypes.has(r.type)) return false;
       return true;
     });
+    
+    console.log(`📊 Total resources in DB: ${resources.length}`);
+    console.log(`   - With VPC: ${withVpc}, Without VPC: ${withoutVpc}`);
+    console.log(`   - Resource types:`, typeCounts);
+    console.log(`🔍 Filter results: ${filtered.length}/${resources.length} resources visible`);
+    console.log(`   - Unchecked accounts: ${uncheckedAccounts.size}`, Array.from(uncheckedAccounts));
+    console.log(`   - Unchecked VPCs: ${uncheckedVPCs.size}`, Array.from(uncheckedVPCs));
+    console.log(`   - Unchecked types: ${uncheckedTypes.size}`, Array.from(uncheckedTypes));
+    
+    return filtered;
   }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes]);
 
   // Get unique relationship types for filtering
@@ -476,6 +506,13 @@ function ArchitectureDiagramFlow() {
   }, [relationships, uncheckedRelTypes]);
 
   useEffect(() => {
+    // FORCE CLEAR ALL FILTERS ON MOUNT - Show all resources by default
+    console.log('🔄 DIAGRAM VERSION 2.0 - ALL FILTERS CLEARED ON MOUNT');
+    setUncheckedAccounts(new Set());
+    setUncheckedVPCs(new Set());
+    setUncheckedTypes(new Set());
+    setUncheckedRelTypes(new Set());
+    
     fetchResources();
     fetchRelationships();
     loadSavedPositions();
@@ -1017,6 +1054,7 @@ function ArchitectureDiagramFlow() {
       const response = await axios.get(`${API_URL}/api/resources`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      console.log(`📊 Fetched ${response.data.length} total resources from database`);
       setResources(response.data);
     } catch (error) {
       console.error('Failed to fetch resources:', error);
@@ -1369,7 +1407,7 @@ function ArchitectureDiagramFlow() {
     console.log(`✅ Created ${flowEdges.length} edges`);
     console.log('Sample edges:', flowEdges.slice(0, 3));
     setEdges(flowEdges);
-  }, [filteredRelationships, nodes, setEdges, highlightedNode]);
+  }, [filteredRelationships, nodes, highlightedNode]);
 
   // Calculate cost estimation
   useEffect(() => {
@@ -1568,171 +1606,209 @@ function ArchitectureDiagramFlow() {
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold text-gray-900">Architecture Diagram</h1>
           <div className="flex items-center gap-2">
-            <button
-              onClick={exportAsPNG}
-              className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 shadow-md hover:shadow-lg transition-all"
-              title="Export diagram as PNG image"
-            >
-              <FileImage className="w-4 h-4" />
-              Export PNG
-            </button>
-            <button
-              onClick={exportAsPDF}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 shadow-md hover:shadow-lg transition-all"
-              title="Export diagram as PDF document"
-            >
-              <FileText className="w-4 h-4" />
-              Export PDF
-            </button>
-            <button
-              onClick={exportAsGIF}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 shadow-md hover:shadow-lg transition-all"
-              title="Export diagram as animated GIF"
-            >
-              <Film className="w-4 h-4" />
-              Export GIF
-            </button>
-            <button
-              onClick={() => setShowResourcePalette(!showResourcePalette)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
-                showResourcePalette 
-                  ? 'bg-orange-500 text-white hover:bg-orange-600' 
-                  : 'bg-white border border-gray-300 hover:bg-gray-50'
-              }`}
-              title="Toggle Resource Palette"
-            >
-              <Plus className="w-4 h-4" />
-              Add Resources
-            </button>
-            <button
-              onClick={() => setShowTemplateLibrary(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-pink-700 shadow-md hover:shadow-lg transition-all"
-              title="Apply pre-built architecture templates"
-            >
-              <BookTemplate className="w-4 h-4" />
-              Templates
-            </button>
-            <button
-              onClick={() => setShowValidation(!showValidation)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
-                showValidation
-                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                  : 'bg-white border border-gray-300 hover:bg-gray-50'
-              }`}
-              title="Validate architecture and show best practices"
-            >
-              <AlertTriangle className="w-4 h-4" />
-              Validate
-            </button>
+            {/* File Menu */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowFileMenu(!showFileMenu);
+                  setShowEditMenu(false);
+                  setShowViewMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 shadow-md hover:shadow-lg transition-all"
+              >
+                <FileImage className="w-4 h-4" />
+                File
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showFileMenu && (
+                <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+                  <button
+                    onClick={() => { exportAsPNG(); setShowFileMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <FileImage className="w-4 h-4 text-green-600" />
+                    <span>Export as PNG</span>
+                  </button>
+                  <button
+                    onClick={() => { exportAsPDF(); setShowFileMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <FileText className="w-4 h-4 text-red-600" />
+                    <span>Export as PDF</span>
+                  </button>
+                  <button
+                    onClick={() => { exportAsGIF(); setShowFileMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Film className="w-4 h-4 text-blue-600" />
+                    <span>Export as GIF</span>
+                  </button>
+                  <div className="border-t border-gray-200 my-1"></div>
+                  <button
+                    onClick={() => { setShowExportModal(true); setShowFileMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <FileCode className="w-4 h-4 text-purple-600" />
+                    <span>Export IaC (CloudFormation/Terraform)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Edit Menu */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowEditMenu(!showEditMenu);
+                  setShowFileMenu(false);
+                  setShowViewMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 shadow-md hover:shadow-lg transition-all"
+              >
+                <Settings className="w-4 h-4" />
+                Edit
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showEditMenu && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+                  <button
+                    onClick={() => { setShowResourcePalette(!showResourcePalette); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Plus className="w-4 h-4 text-orange-600" />
+                    <span>Add Resources</span>
+                  </button>
+                  <button
+                    onClick={() => { setShowTemplateLibrary(true); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <BookTemplate className="w-4 h-4 text-purple-600" />
+                    <span>Apply Template</span>
+                  </button>
+                  <div className="border-t border-gray-200 my-1"></div>
+                  <button
+                    onClick={async () => {
+                      setShowEditMenu(false);
+                      if (confirm('Discover relationships from existing resources?\n\nThis will analyze:\n- CloudFormation stacks\n- VPC/Subnet associations\n- Lambda event sources\n- CodePipeline connections\n- ARN references')) {
+                        try {
+                          const token = localStorage.getItem('access_token');
+                          const response = await axios.post(
+                            `${API_URL}/api/relationships/discover`,
+                            {},
+                            { headers: { Authorization: `Bearer ${token}` } }
+                          );
+                          alert(`✅ Success!\n\nDiscovered: ${response.data.discovered} relationships\nImported: ${response.data.imported} new relationships\n\nRefreshing diagram...`);
+                          await fetchRelationships();
+                          setTimeout(() => applyAILayout(), 500);
+                        } catch (error) {
+                          console.error('Discovery failed:', error);
+                          alert('Failed to discover relationships: ' + (error.response?.data?.detail || error.message));
+                        }
+                      }
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Network className="w-4 h-4 text-green-600" />
+                    <span>Discover Relationships</span>
+                  </button>
+                  <button
+                    onClick={() => { setShowValidation(!showValidation); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <AlertTriangle className="w-4 h-4 text-yellow-600" />
+                    <span>Validate Architecture</span>
+                  </button>
+                  <div className="border-t border-gray-200 my-1"></div>
+                  <button
+                    onClick={() => { applyAILayout(); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Brain className="w-4 h-4 text-cyan-600" />
+                    <span>AI Layout (Ollama)</span>
+                  </button>
+                  <button
+                    onClick={() => { applyELKLayout(); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Layers className="w-4 h-4 text-violet-600" />
+                    <span>ELK Layout</span>
+                  </button>
+                  <button
+                    onClick={() => { applyAutoLayout(); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Sparkles className="w-4 h-4 text-orange-600" />
+                    <span>AWS Layout</span>
+                  </button>
+                  <button
+                    onClick={() => { undoAutoLayout(); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4 text-amber-600 transform scale-x-[-1]" />
+                    <span>Undo Layout</span>
+                  </button>
+                  <button
+                    onClick={() => { resetLayout(); setShowEditMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4 text-gray-600" />
+                    <span>Reset Layout</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* View Menu */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowViewMenu(!showViewMenu);
+                  setShowFileMenu(false);
+                  setShowEditMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 shadow-md hover:shadow-lg transition-all"
+              >
+                <Eye className="w-4 h-4" />
+                View
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showViewMenu && (
+                <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+                  <button
+                    onClick={() => {
+                      const newState = !showLegend;
+                      setShowLegend(newState);
+                      localStorage.setItem('diagram_show_legend', newState.toString());
+                      setShowViewMenu(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Eye className={`w-4 h-4 ${showLegend ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    <span>{showLegend ? '✓ ' : ''}Legend Panels</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newState = !showMinimap;
+                      setShowMinimap(newState);
+                      localStorage.setItem('diagram_show_minimap', newState.toString());
+                      setShowViewMenu(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <Map className={`w-4 h-4 ${showMinimap ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    <span>{showMinimap ? '✓ ' : ''}Minimap</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Cost Display */}
             <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg text-sm font-medium shadow-md" title="Estimated monthly AWS cost">
               <DollarSign className="w-4 h-4" />
               <span className="font-bold">{formatCost(estimatedCost)}/mo</span>
             </div>
-            <button
-              onClick={() => setShowExportModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
-              title="Export to CloudFormation or Terraform"
-            >
-              <FileCode className="w-4 h-4" />
-              Export IaC
-            </button>
-            <button
-              onClick={async () => {
-                if (confirm('Discover relationships from existing resources?\n\nThis will analyze:\n- CloudFormation stacks\n- VPC/Subnet associations\n- Lambda event sources\n- CodePipeline connections\n- ARN references')) {
-                  try {
-                    const token = localStorage.getItem('access_token');
-                    const response = await axios.post(
-                      `${API_URL}/api/relationships/discover`,
-                      {},
-                      { headers: { Authorization: `Bearer ${token}` } }
-                    );
-                    alert(`✅ Success!\n\nDiscovered: ${response.data.discovered} relationships\nImported: ${response.data.imported} new relationships\n\nRefreshing diagram...`);
-                    await fetchRelationships();
-                    setTimeout(() => applyAILayout(), 500);
-                  } catch (error) {
-                    console.error('Discovery failed:', error);
-                    alert('Failed to discover relationships: ' + (error.response?.data?.detail || error.message));
-                  }
-                }
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg text-sm font-medium hover:from-green-600 hover:to-emerald-700 shadow-md hover:shadow-lg transition-all"
-              title="Automatically discover relationships from CloudFormation stacks, VPC associations, and more"
-            >
-              <Network className="w-4 h-4" />
-              Discover Relationships
-            </button>
-            <button
-              onClick={applyAILayout}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg text-sm font-medium hover:from-cyan-600 hover:to-blue-700 shadow-md hover:shadow-lg transition-all"
-              title="AI-powered intelligent layout using Ollama qwen2.5 - analyzes relationships and suggests optimal grouping"
-            >
-              <Brain className="w-4 h-4" />
-              AI Layout
-            </button>
-            <button
-              onClick={applyELKLayout}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-lg text-sm font-medium hover:from-violet-600 hover:to-purple-700 shadow-md hover:shadow-lg transition-all"
-              title="ELK Layout - Advanced algorithm that minimizes edge crossings"
-            >
-              <Layers className="w-4 h-4" />
-              ELK Layout
-            </button>
-            <button
-              onClick={applyAutoLayout}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-600 text-white rounded-lg text-sm font-medium hover:from-orange-600 hover:to-amber-700 shadow-md hover:shadow-lg transition-all"
-              title="Professional AWS Architecture Layout - Groups by service tiers (Entry → Network → Compute → App → Data → Storage)"
-            >
-              <Sparkles className="w-4 h-4" />
-              AWS Layout
-            </button>
-            <button
-              onClick={undoAutoLayout}
-              className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 shadow-md hover:shadow-lg transition-all"
-              title="Undo last auto-layout and restore previous positions"
-            >
-              <RefreshCw className="w-4 h-4 transform scale-x-[-1]" />
-              Undo Layout
-            </button>
-            <button
-              onClick={resetLayout}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-md hover:shadow-lg transition-all"
-              title="Reset diagram layout to default"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Reset Layout
-            </button>
-            <button
-              onClick={() => {
-                const newState = !showLegend;
-                setShowLegend(newState);
-                localStorage.setItem('diagram_show_legend', newState.toString());
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
-                showLegend 
-                  ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
-                  : 'bg-white border border-gray-300 hover:bg-gray-50'
-              }`}
-              title={showLegend ? "Hide legend panels" : "Show legend panels"}
-            >
-              <Eye className={`w-4 h-4 ${!showLegend ? 'opacity-50' : ''}`} />
-              Legend
-            </button>
-            <button
-              onClick={() => {
-                const newState = !showMinimap;
-                setShowMinimap(newState);
-                localStorage.setItem('diagram_show_minimap', newState.toString());
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all ${
-                showMinimap 
-                  ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
-                  : 'bg-white border border-gray-300 hover:bg-gray-50'
-              }`}
-              title={showMinimap ? "Hide minimap preview" : "Show minimap preview"}
-            >
-              <Map className={`w-4 h-4 ${!showMinimap ? 'opacity-50' : ''}`} />
-              Minimap
-            </button>
+
+            {/* Back Button */}
             <button
               onClick={() => navigate('/resources')}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-md hover:shadow-lg transition-all"
@@ -1743,7 +1819,21 @@ function ArchitectureDiagramFlow() {
         </div>
 
         {/* Filters with Checkboxes */}
-        <div className="flex items-center gap-6 flex-wrap">
+        <div className="flex items-center gap-6 flex-wrap px-4 py-2">
+          {/* Show All Resources Button */}
+          <button
+            onClick={() => {
+              setUncheckedAccounts(new Set());
+              setUncheckedVPCs(new Set());
+              setUncheckedTypes(new Set());
+              setUncheckedRelTypes(new Set());
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 shadow-md hover:shadow-lg transition-all"
+          >
+            <Eye className="w-4 h-4" />
+            Show All Resources
+          </button>
+          
           {/* Account Filter */}
           <div className="relative">
             <button
@@ -1835,6 +1925,20 @@ function ArchitectureDiagramFlow() {
             </button>
             {showTypeFilter && (
               <div className="absolute top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-3 z-50 min-w-[200px] max-h-[300px] overflow-y-auto">
+                <div className="flex gap-2 mb-2 pb-2 border-b border-gray-200">
+                  <button
+                    onClick={() => setUncheckedTypes(new Set())}
+                    className="flex-1 px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={() => setUncheckedTypes(new Set(types))}
+                    className="flex-1 px-2 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
                 {types.map((type) => (
                   <label key={type} className="flex items-center gap-2 py-1.5 hover:bg-gray-50 cursor-pointer">
                     <input

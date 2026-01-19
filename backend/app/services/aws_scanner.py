@@ -9,6 +9,11 @@ import json
 from sqlalchemy.orm import Session
 from app.models import Resource
 import logging
+from app.services.aws_scanner_additions import (
+    scan_route53_hosted_zones,
+    scan_cloudfront_distributions,
+    scan_amazon_mq_brokers
+)
 
 logger = logging.getLogger(__name__)
 
@@ -576,7 +581,10 @@ class AWSScanner:
             'sns': self.scan_sns_topics(),
             'sqs': self.scan_sqs_queues(),
             'apigateway': self.scan_api_gateways(),
-            'codepipeline': self.scan_codepipeline()
+            'codepipeline': self.scan_codepipeline(),
+            'route53': scan_route53_hosted_zones(self.session, self.region, self.get_account_id()),
+            'cloudfront': scan_cloudfront_distributions(self.session, self.region, self.get_account_id()),
+            'amazonmq': scan_amazon_mq_brokers(self.session, self.region, self.get_account_id())
         }
         
         total = sum(len(resources) for resources in results.values())

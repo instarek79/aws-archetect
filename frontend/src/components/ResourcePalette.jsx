@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 
 // AWS Service Categories with icons
 const AWS_SERVICE_CATEGORIES = {

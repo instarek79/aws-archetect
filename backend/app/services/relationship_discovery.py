@@ -33,6 +33,7 @@ class RelationshipDiscovery:
         self.discover_lambda_relationships(resources)
         self.discover_codepipeline_relationships(resources)
         self.discover_arn_references(resources)
+        self.discover_route53_relationships(resources)
         
         print(f"✅ Discovered {len(self.discovered_relationships)} relationships")
         return self.discovered_relationships
@@ -206,6 +207,86 @@ class RelationshipDiscovery:
                             )
         
         print(f"🔗 ARN: Checked {len(resources)} resources for references")
+    
+    def discover_route53_relationships(self, resources: List[Resource]):
+        """Discover Route53 DNS records pointing to load balancers, CloudFront, or other resources"""
+        route53_zones = [r for r in resources if r.type and 'route53' in r.type.lower()]
+        load_balancers = [r for r in resources if r.type and ('elb' in r.type.lower() or 'alb' in r.type.lower() or 'nlb' in r.type.lower())]
+        cloudfront = [r for r in resources if r.type and 'cloudfront' in r.type.lower()]
+        ec2_instances = [r for r in resources if r.type and 'ec2' in r.type.lower()]
+        
+        relationships_found = 0
+        
+        # Check Route53 zones for DNS records pointing to resources
+        for zone in route53_zones:
+            if not zone.type_specific_properties:
+                continue
+            
+            try:
+                props = json.loads(zone.type_specific_properties) if isinstance(zone.type_specific_properties, str) else zone.type_specific_properties
+                
+                # Check for A/CNAME records in zone properties
+                # Route53 zones may have record information in their properties
+                zone_name = zone.name.lower() if zone.name else ''
+                
+                # Match Route53 to Load Balancers by domain patterns
+                for lb in load_balancers:
+                    lb_props = json.loads(lb.type_specific_properties) if isinstance(lb.type_specific_properties, str) else lb.type_specific_properties if lb.type_specific_properties else {}
+                    lb_dns = lb_props.get('dns_name', '').lower() if lb_props else ''
+                    
+                    # If load balancer DNS contains the zone name or vice versa
+                    if lb_dns and zone_name and (zone_name in lb_dns or any(part in lb_dns for part in zone_name.split('.') if len(part) > 3)):
+                        self.add_relationship(
+                            zone.id,
+                            lb.id,
+                            'routes_to',
+                            f'DNS A/CNAME Record',
+                            'unidirectional'
+                        )
+                        relationships_found += 1
+                
+                # Match Route53 to CloudFront distributions
+                for cf in cloudfront:
+                    cf_props = json.loads(cf.type_specific_properties) if isinstance(cf.type_specific_properties, str) else cf.type_specific_properties if cf.type_specific_properties else {}
+                    cf_domain = cf_props.get('domain_name', '').lower() if cf_props else ''
+                    cf_aliases = cf_props.get('aliases', []) if cf_props else []
+                    
+                    # Check if zone name matches CloudFront aliases
+                    if zone_name and cf_aliases:
+                        for alias in cf_aliases:
+                            if zone_name in alias.lower() or alias.lower() in zone_name:
+                                self.add_relationship(
+                                    zone.id,
+                                    cf.id,
+                                    'routes_to',
+                                    f'DNS CNAME to CloudFront',
+                                    'unidirectional'
+                                )
+                                relationships_found += 1
+                                break
+                
+                # Match Route53 to EC2 instances (for direct A records)
+                for ec2 in ec2_instances:
+                    ec2_props = json.loads(ec2.type_specific_properties) if isinstance(ec2.type_specific_properties, str) else ec2.type_specific_properties if ec2.type_specific_properties else {}
+                    public_ip = ec2_props.get('public_ip', '') if ec2_props else ''
+                    public_dns = ec2_props.get('public_dns_name', '').lower() if ec2_props else ''
+                    
+                    # Match by DNS name patterns
+                    if public_dns and zone_name and zone_name in public_dns:
+                        self.add_relationship(
+                            zone.id,
+                            ec2.id,
+                            'routes_to',
+                            f'DNS A Record',
+                            'unidirectional'
+                        )
+                        relationships_found += 1
+                        
+            except Exception as e:
+                print(f"⚠️ Error processing Route53 zone {zone.name}: {e}")
+                continue
+        
+        print(f"🌐 Route53: Found {len(route53_zones)} zones, discovered {relationships_found} DNS routing relationships")
     
     def add_relationship(self, source_id: int, target_id: int, rel_type: str, label: str, direction: str):
         """Add a relationship to the discovered list (avoid duplicates)"""
