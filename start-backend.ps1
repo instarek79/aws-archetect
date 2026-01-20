@@ -92,8 +92,8 @@ Write-Host "====================================================================
 Write-Host ""
 Write-Host "Services:" -ForegroundColor Cyan
 Write-Host "  Database:  postgresql://localhost:5433/auth_db (Docker)" -ForegroundColor White
-Write-Host "  Backend:   http://localhost:8000" -ForegroundColor White
-Write-Host "  API Docs:  http://localhost:8000/docs" -ForegroundColor White
+Write-Host "  Backend:   https://localhost:8000" -ForegroundColor White
+Write-Host "  API Docs:  https://localhost:8000/docs" -ForegroundColor White
 Write-Host ""
 Write-Host "Now start the frontend in another terminal:" -ForegroundColor Yellow
 Write-Host "  .\START-FRONTEND.ps1" -ForegroundColor White
@@ -116,8 +116,8 @@ if ($adminCheck -notmatch "exists") {
 Write-Host ""
 
 # Start FastAPI server
-Write-Host "Starting FastAPI server..." -ForegroundColor Yellow
+Write-Host "Starting FastAPI server with HTTPS..." -ForegroundColor Yellow
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-keyfile="certs/key.pem" --ssl-certfile="certs/cert.pem"

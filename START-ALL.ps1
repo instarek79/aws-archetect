@@ -90,8 +90,8 @@ $backendCommand = @"
 Write-Host 'Activating virtual environment...' -ForegroundColor Yellow
 .\venv\Scripts\Activate.ps1
 
-Write-Host 'Starting FastAPI server on http://localhost:8000' -ForegroundColor Green
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+Write-Host 'Starting FastAPI server on https://localhost:8000' -ForegroundColor Green
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-keyfile="certs/key.pem" --ssl-certfile="certs/cert.pem"
 "@
 
 Start-ServiceWindow -Title "Backend API" -Command $backendCommand -WorkingDir "D:\aws-archetect\backend"
@@ -105,7 +105,7 @@ Write-Host ""
 Write-Host "[3/3] Starting Frontend..." -ForegroundColor Green
 
 $frontendCommand = @"
-Write-Host 'Starting Vite dev server on http://localhost:3000' -ForegroundColor Green
+Write-Host 'Starting Vite dev server on https://localhost:3000' -ForegroundColor Green
 npm run dev
 "@
 
@@ -119,9 +119,9 @@ Write-Host "====================================================================
 Write-Host ""
 Write-Host "Services Running:" -ForegroundColor Cyan
 Write-Host "  Database:  postgresql://localhost:5433/auth_db (Docker)" -ForegroundColor White
-Write-Host "  Backend:   http://localhost:8000" -ForegroundColor White
-Write-Host "  Frontend:  http://localhost:3000" -ForegroundColor White
-Write-Host "  API Docs:  http://localhost:8000/docs" -ForegroundColor White
+Write-Host "  Backend:   https://localhost:8000" -ForegroundColor White
+Write-Host "  Frontend:  https://localhost:3000" -ForegroundColor White
+Write-Host "  API Docs:  https://localhost:8000/docs" -ForegroundColor White
 Write-Host ""
 Write-Host "Login Credentials:" -ForegroundColor Cyan
 Write-Host "  Email:     admin@example.com" -ForegroundColor White

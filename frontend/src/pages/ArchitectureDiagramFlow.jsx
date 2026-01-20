@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ReactFlow, {
   MiniMap,
@@ -204,11 +204,11 @@ function ResourceNode({ data, selected }) {
   
   return (
     <div className="group relative flex flex-col items-center">
-      {/* Connection Handles - invisible but functional */}
-      <Handle type="target" position={Position.Left} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
-      <Handle type="source" position={Position.Right} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
-      <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
-      <Handle type="source" position={Position.Bottom} className="w-3 h-3 !bg-gray-400 !border-2 !border-white opacity-0 hover:opacity-100" />
+      {/* Connection Handles - visible on hover */}
+      <Handle type="target" position={Position.Left} className="w-3 h-3 !bg-blue-500 !border-2 !border-white opacity-0 group-hover:opacity-100 transition-opacity" />
+      <Handle type="source" position={Position.Right} className="w-3 h-3 !bg-blue-500 !border-2 !border-white opacity-0 group-hover:opacity-100 transition-opacity" />
+      <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-blue-500 !border-2 !border-white opacity-0 group-hover:opacity-100 transition-opacity" />
+      <Handle type="source" position={Position.Bottom} className="w-3 h-3 !bg-blue-500 !border-2 !border-white opacity-0 group-hover:opacity-100 transition-opacity" />
       
       {/* AWS Icon - Large and prominent */}
       <div 
@@ -369,6 +369,11 @@ function ArchitectureDiagramFlow() {
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showEditMenu, setShowEditMenu] = useState(false);
   const [showViewMenu, setShowViewMenu] = useState(false);
+  const [selectedEdge, setSelectedEdge] = useState(null);
+  const [showEdgeEditModal, setShowEdgeEditModal] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [contextMenuNode, setContextMenuNode] = useState(null);
+  const [hiddenNodes, setHiddenNodes] = useState(new Set());
 
   const saveNodePositions = useCallback((nodes) => {
     try {
@@ -1326,6 +1331,11 @@ function ArchitectureDiagramFlow() {
     setNodes(flowNodes);
   }, [filteredResources, setNodes, savedPositions, useFlatLayout]);
 
+  // Filter out hidden nodes
+  const visibleNodes = useMemo(() => {
+    return nodes.filter(node => !hiddenNodes.has(node.id));
+  }, [nodes, hiddenNodes]);
+  
   // Convert relationships to React Flow edges with enhanced styling
   useEffect(() => {
     if (filteredRelationships.length === 0) {
@@ -1378,7 +1388,9 @@ function ArchitectureDiagramFlow() {
         // Show flow number in circle like AWS diagrams
         label: `${flowNumber}`,
         type: 'smoothstep',
-        animated: false,
+        animated: true,
+        selectable: true,
+        focusable: true,
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: isHighlighted ? '#000000' : (isDimmed ? '#E5E7EB' : '#374151'),
@@ -1387,9 +1399,10 @@ function ArchitectureDiagramFlow() {
         },
         style: {
           stroke: isHighlighted ? '#000000' : (isDimmed ? '#E5E7EB' : '#374151'),
-          strokeWidth: isHighlighted ? 2.5 : 1.5,
+          strokeWidth: isHighlighted ? 3 : 2,
           opacity: isDimmed ? 0.15 : 1,
         },
+        interactionWidth: 20,
         labelStyle: {
           fill: '#FFFFFF',
           fontWeight: 700,
@@ -1401,6 +1414,12 @@ function ArchitectureDiagramFlow() {
         },
         labelBgPadding: [6, 6],
         labelBgBorderRadius: 50,
+        data: {
+          relationshipId: rel.id,
+          relationship_type: rel.relationship_type,
+          direction: rel.direction,
+          label: rel.label,
+        },
       };
     });
 
@@ -1500,6 +1519,227 @@ function ArchitectureDiagramFlow() {
     }
   };
 
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
+  
+  // Layout alignment helpers
+  const alignNodes = useCallback((direction) => {
+    const selectedNodes = nodes.filter(n => n.selected && n.type === 'resource');
+    if (selectedNodes.length < 2) {
+      alert('Please select at least 2 nodes to align');
+      return;
+    }
+    
+    const updatedNodes = nodes.map(node => {
+      if (!node.selected || node.type !== 'resource') return node;
+      
+      if (direction === 'left') {
+        const minX = Math.min(...selectedNodes.map(n => n.position.x));
+        return { ...node, position: { ...node.position, x: minX } };
+      } else if (direction === 'right') {
+        const maxX = Math.max(...selectedNodes.map(n => n.position.x));
+        return { ...node, position: { ...node.position, x: maxX } };
+      } else if (direction === 'top') {
+        const minY = Math.min(...selectedNodes.map(n => n.position.y));
+        return { ...node, position: { ...node.position, y: minY } };
+      } else if (direction === 'bottom') {
+        const maxY = Math.max(...selectedNodes.map(n => n.position.y));
+        return { ...node, position: { ...node.position, y: maxY } };
+      } else if (direction === 'horizontal') {
+        const avgY = selectedNodes.reduce((sum, n) => sum + n.position.y, 0) / selectedNodes.length;
+        return { ...node, position: { ...node.position, y: avgY } };
+      } else if (direction === 'vertical') {
+        const avgX = selectedNodes.reduce((sum, n) => sum + n.position.x, 0) / selectedNodes.length;
+        return { ...node, position: { ...node.position, x: avgX } };
+      }
+      return node;
+    });
+    
+    setNodes(updatedNodes);
+    saveNodePositions(updatedNodes);
+  }, [nodes, setNodes, saveNodePositions]);
+  
+  const distributeNodes = useCallback((direction) => {
+    const selectedNodes = nodes.filter(n => n.selected && n.type === 'resource');
+    if (selectedNodes.length < 3) {
+      alert('Please select at least 3 nodes to distribute');
+      return;
+    }
+    
+    const sorted = [...selectedNodes].sort((a, b) => 
+      direction === 'horizontal' ? a.position.x - b.position.x : a.position.y - b.position.y
+    );
+    
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const totalSpace = direction === 'horizontal' 
+      ? last.position.x - first.position.x
+      : last.position.y - first.position.y;
+    const spacing = totalSpace / (sorted.length - 1);
+    
+    const updatedNodes = nodes.map(node => {
+      const index = sorted.findIndex(n => n.id === node.id);
+      if (index === -1) return node;
+      
+      if (direction === 'horizontal') {
+        return { ...node, position: { ...node.position, x: first.position.x + (spacing * index) } };
+      } else {
+        return { ...node, position: { ...node.position, y: first.position.y + (spacing * index) } };
+      }
+    });
+    
+    setNodes(updatedNodes);
+    saveNodePositions(updatedNodes);
+  }, [nodes, setNodes, saveNodePositions]);
+  
+  // Toggle node visibility
+  const toggleNodeVisibility = useCallback((nodeId) => {
+    setHiddenNodes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeId)) {
+        newSet.delete(nodeId);
+      } else {
+        newSet.add(nodeId);
+      }
+      return newSet;
+    });
+  }, []);
+  
+  const showAllNodes = useCallback(() => {
+    setHiddenNodes(new Set());
+  }, []);
+  
+  // Handle right-click context menu
+  const handleNodeContextMenu = useCallback((event, node) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      type: 'node',
+    });
+    setContextMenuNode(node);
+  }, []);
+  
+  const handleEdgeContextMenu = useCallback((event, edge) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      type: 'edge',
+    });
+    setSelectedEdge(edge);
+  }, []);
+  
+  const handlePaneContextMenu = useCallback((event) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      type: 'pane',
+    });
+  }, []);
+  
+  // Handle Delete key to remove selected nodes and edges
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        // Get selected nodes and edges
+        const selectedNodes = nodes.filter(node => node.selected);
+        const selectedEdges = edges.filter(edge => edge.selected);
+        
+        if (selectedNodes.length > 0 || selectedEdges.length > 0) {
+          event.preventDefault();
+          
+          const confirmMessage = [];
+          if (selectedNodes.length > 0) {
+            confirmMessage.push(`${selectedNodes.length} node(s)`);
+          }
+          if (selectedEdges.length > 0) {
+            confirmMessage.push(`${selectedEdges.length} relationship(s)`);
+          }
+          
+          if (window.confirm(`Delete ${confirmMessage.join(' and ')}?`)) {
+            // Delete selected edges (relationships)
+            if (selectedEdges.length > 0) {
+              deleteSelectedEdges(selectedEdges);
+            }
+            
+            // Delete selected nodes (resources)
+            if (selectedNodes.length > 0) {
+              deleteSelectedNodes(selectedNodes);
+            }
+          }
+        }
+      }
+    };
+    
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [nodes, edges]);
+  
+  // Delete selected edges (relationships)
+  const deleteSelectedEdges = async (selectedEdges) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      
+      for (const edge of selectedEdges) {
+        // Extract relationship ID from edge data
+        const relationshipId = edge.data?.relationshipId;
+        if (relationshipId) {
+          await axios.delete(
+            `${API_URL}/api/relationships/${relationshipId}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        }
+      }
+      
+      // Remove edges from UI
+      setEdges(edges.filter(e => !selectedEdges.find(se => se.id === e.id)));
+      
+      // Refresh relationships from backend
+      await fetchRelationships();
+      
+      console.log(`Deleted ${selectedEdges.length} relationship(s)`);
+    } catch (error) {
+      console.error('Failed to delete relationships:', error);
+      alert('Failed to delete some relationships. Please try again.');
+    }
+  };
+  
+  // Delete selected nodes (resources)
+  const deleteSelectedNodes = async (selectedNodes) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      
+      for (const node of selectedNodes) {
+        if (node.type === 'resource') {
+          const resourceId = node.data?.resource?.id;
+          if (resourceId) {
+            await axios.delete(
+              `${API_URL}/api/resources/${resourceId}`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          }
+        }
+      }
+      
+      // Remove nodes from UI
+      setNodes(nodes.filter(n => !selectedNodes.find(sn => sn.id === n.id)));
+      
+      // Refresh resources from backend
+      await fetchResources();
+      
+      console.log(`Deleted ${selectedNodes.length} resource(s)`);
+    } catch (error) {
+      console.error('Failed to delete resources:', error);
+      alert('Failed to delete some resources. Please try again.');
+    }
+  };
+  
   const onConnect = useCallback(
     (params) => {
       const sourceResource = resources.find((r) => r.id.toString() === params.source);
@@ -1558,16 +1798,11 @@ function ArchitectureDiagramFlow() {
         }
       );
 
-      alert('Relationship created successfully! Applying AI layout...');
+      alert('✅ Relationship created successfully!');
       setShowRelationshipModal(false);
       setNewRelationshipData(null);
 
       await fetchRelationships();
-      
-      // Auto-trigger AI layout after creating relationship
-      setTimeout(() => {
-        applyAILayout();
-      }, 500);
     } catch (error) {
       console.error('Failed to create relationship:', error);
       console.error('Error response:', error.response?.data);
@@ -2087,7 +2322,7 @@ function ArchitectureDiagramFlow() {
         }}
       >
         <ReactFlow
-          nodes={nodes}
+          nodes={visibleNodes}
           edges={edges}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
@@ -2102,16 +2337,47 @@ function ArchitectureDiagramFlow() {
           onNodeMouseLeave={() => {
             setHighlightedNode(null);
           }}
+          onEdgeClick={(event, edge) => {
+            setSelectedEdge(edge);
+          }}
+          onEdgeDoubleClick={(event, edge) => {
+            event.preventDefault();
+            setSelectedEdge(edge);
+            setShowEdgeEditModal(true);
+          }}
+          onNodeContextMenu={handleNodeContextMenu}
+          onEdgeContextMenu={handleEdgeContextMenu}
+          onPaneContextMenu={handlePaneContextMenu}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.1, maxZoom: 1 }}
-          minZoom={0.1}
-          maxZoom={1.5}
+          fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+          minZoom={0.05}
+          maxZoom={2}
           defaultEdgeOptions={{
             type: 'smoothstep',
             animated: true,
             style: { strokeWidth: 3 },
           }}
+          connectionLineStyle={{
+            strokeWidth: 3,
+            stroke: '#3B82F6',
+            strokeDasharray: '5,5',
+          }}
+          connectionLineType="smoothstep"
+          deleteKeyCode="Delete"
+          multiSelectionKeyCode="Control"
+          selectionKeyCode="Shift"
+          panOnScroll={true}
+          panOnDrag={true}
+          zoomOnScroll={true}
+          zoomOnPinch={true}
+          zoomOnDoubleClick={false}
+          selectNodesOnDrag={false}
+          elevateEdgesOnSelect={true}
+          edgesSelectable={true}
+          nodesConnectable={true}
+          nodesDraggable={true}
+          elementsSelectable={true}
         >
           <Background 
             color="#F3F4F6" 
@@ -2138,6 +2404,37 @@ function ArchitectureDiagramFlow() {
               pannable
             />
           )}
+
+          {/* Keyboard Shortcuts Help Panel */}
+          <Panel position="bottom-right" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
+            <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">⌨️ Keyboard Shortcuts</div>
+            <div className="space-y-1 text-xs text-gray-600">
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Delete</span>
+                <span>Delete selected items</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Ctrl+Click</span>
+                <span>Multi-select</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Shift+Drag</span>
+                <span>Box select</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Double-Click</span>
+                <span>Edit edge/node</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Drag</span>
+                <span>Create relationship</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Scroll</span>
+                <span>Pan diagram</span>
+              </div>
+            </div>
+          </Panel>
 
           {/* AWS Architecture Tier Legend */}
           {showLegend && (
@@ -2618,6 +2915,349 @@ function ArchitectureDiagramFlow() {
         isOpen={showValidation}
         onClose={() => setShowValidation(false)}
       />
+
+      {/* Right-Click Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50 min-w-[180px]"
+          style={{
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {contextMenu.type === 'node' && contextMenuNode && (
+            <>
+              <button
+                onClick={() => {
+                  if (contextMenuNode.type === 'resource') {
+                    setConfigResource(contextMenuNode.data.resource);
+                    setShowConfigPanel(true);
+                  }
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Edit Resource
+              </button>
+              <button
+                onClick={() => {
+                  toggleNodeVisibility(contextMenuNode.id);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                {hiddenNodes.has(contextMenuNode.id) ? 'Show' : 'Hide'} Node
+              </button>
+              <div className="border-t border-gray-200 my-1"></div>
+              <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase">Align</div>
+              <button
+                onClick={() => {
+                  alignNodes('left');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">⬅</span>
+                Align Left
+              </button>
+              <button
+                onClick={() => {
+                  alignNodes('right');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">➡</span>
+                Align Right
+              </button>
+              <button
+                onClick={() => {
+                  alignNodes('top');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">⬆</span>
+                Align Top
+              </button>
+              <button
+                onClick={() => {
+                  alignNodes('bottom');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">⬇</span>
+                Align Bottom
+              </button>
+              <button
+                onClick={() => {
+                  alignNodes('horizontal');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">↔</span>
+                Align Horizontal Center
+              </button>
+              <button
+                onClick={() => {
+                  alignNodes('vertical');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">↕</span>
+                Align Vertical Center
+              </button>
+              <div className="border-t border-gray-200 my-1"></div>
+              <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase">Distribute</div>
+              <button
+                onClick={() => {
+                  distributeNodes('horizontal');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">⬌</span>
+                Distribute Horizontally
+              </button>
+              <button
+                onClick={() => {
+                  distributeNodes('vertical');
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <span className="w-4 h-4 flex items-center justify-center">⬍</span>
+                Distribute Vertically
+              </button>
+              <div className="border-t border-gray-200 my-1"></div>
+              <button
+                onClick={async () => {
+                  if (window.confirm('Delete this resource?')) {
+                    await deleteSelectedNodes([contextMenuNode]);
+                  }
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"
+              >
+                <X className="w-4 h-4" />
+                Delete Resource
+              </button>
+            </>
+          )}
+          
+          {contextMenu.type === 'edge' && selectedEdge && (
+            <>
+              <button
+                onClick={() => {
+                  setShowEdgeEditModal(true);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Edit Relationship
+              </button>
+              <button
+                onClick={async () => {
+                  if (window.confirm('Delete this relationship?')) {
+                    await deleteSelectedEdges([selectedEdge]);
+                  }
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"
+              >
+                <X className="w-4 h-4" />
+                Delete Relationship
+              </button>
+            </>
+          )}
+          
+          {contextMenu.type === 'pane' && (
+            <>
+              <button
+                onClick={() => {
+                  setShowResourcePalette(true);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Add Resource
+              </button>
+              <div className="border-t border-gray-200 my-1"></div>
+              <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase">Layout</div>
+              <button
+                onClick={() => {
+                  applyAILayout();
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Sparkles className="w-4 h-4" />
+                AI Layout
+              </button>
+              <button
+                onClick={() => {
+                  applyELKLayout();
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Network className="w-4 h-4" />
+                ELK Layout
+              </button>
+              <button
+                onClick={() => {
+                  applyAWSLayout();
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Layers className="w-4 h-4" />
+                AWS Layout
+              </button>
+              <button
+                onClick={() => {
+                  undoLayout();
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Undo Layout
+              </button>
+              <div className="border-t border-gray-200 my-1"></div>
+              <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase">View</div>
+              {hiddenNodes.size > 0 && (
+                <button
+                  onClick={() => {
+                    showAllNodes();
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <Eye className="w-4 h-4" />
+                  Show All Hidden Nodes ({hiddenNodes.size})
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setShowLegend(!showLegend);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Map className="w-4 h-4" />
+                Toggle Legend
+              </button>
+              <button
+                onClick={() => {
+                  setShowMinimap(!showMinimap);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Map className="w-4 h-4" />
+                Toggle Minimap
+              </button>
+              <div className="border-t border-gray-200 my-1"></div>
+              <button
+                onClick={() => {
+                  setShowValidation(true);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                Validate Diagram
+              </button>
+              <button
+                onClick={() => {
+                  setShowTemplateLibrary(true);
+                  setContextMenu(null);
+                }}
+                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+              >
+                <BookTemplate className="w-4 h-4" />
+                Template Library
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Edge Edit Modal - Double-click on edge to edit/delete relationship */}
+      {showEdgeEditModal && selectedEdge && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900">Edit Relationship</h3>
+              <button
+                onClick={() => {
+                  setShowEdgeEditModal(false);
+                  setSelectedEdge(null);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Relationship Type</label>
+                <p className="text-sm text-gray-900 mt-1 font-mono bg-gray-50 px-3 py-2 rounded">
+                  {selectedEdge.data?.relationship_type || 'Unknown'}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700">Label</label>
+                <p className="text-sm text-gray-900 mt-1 bg-gray-50 px-3 py-2 rounded">
+                  {selectedEdge.label || 'No label'}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700">Direction</label>
+                <p className="text-sm text-gray-900 mt-1 bg-gray-50 px-3 py-2 rounded">
+                  {selectedEdge.data?.direction || 'unidirectional'}
+                </p>
+              </div>
+
+              <div className="pt-4 border-t flex gap-3">
+                <button
+                  onClick={async () => {
+                    if (window.confirm('Delete this relationship?')) {
+                      await deleteSelectedEdges([selectedEdge]);
+                      setShowEdgeEditModal(false);
+                      setSelectedEdge(null);
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm"
+                >
+                  Delete Relationship
+                </button>
+                <button
+                  onClick={() => {
+                    setShowEdgeEditModal(false);
+                    setSelectedEdge(null);
+                  }}
+                  className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
