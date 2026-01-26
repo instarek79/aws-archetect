@@ -16,7 +16,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map, Plus, Code, FileCode, DollarSign, AlertTriangle, BookTemplate, Settings, ChevronDown
+  Download, X, RefreshCw, Layers, Sparkles, FileImage, FileText, Film, Brain, Network, Eye, Map as MapIcon, Plus, Code, FileCode, DollarSign, AlertTriangle, BookTemplate, Settings, ChevronDown
 } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 import dagre from 'dagre';
@@ -426,11 +426,17 @@ function ArchitectureDiagramFlow() {
   const [useFlatLayout, setUseFlatLayout] = useState(() => {
     return localStorage.getItem('diagram_flat_layout') === 'true';
   });
+  const [autoPositioning, setAutoPositioning] = useState(() => {
+    return localStorage.getItem('diagram_auto_positioning') !== 'false';
+  });
   const [showLegend, setShowLegend] = useState(() => {
     return localStorage.getItem('diagram_show_legend') !== 'false';
   });
   const [showMinimap, setShowMinimap] = useState(() => {
     return localStorage.getItem('diagram_show_minimap') !== 'false';
+  });
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(() => {
+    return localStorage.getItem('diagram_show_shortcuts') !== 'false';
   });
   
   // Get unique values for filters
@@ -928,69 +934,137 @@ function ArchitectureDiagramFlow() {
     }
   }, []);
 
-  const exportAsPNG = useCallback(() => {
+  const exportAsPNG = useCallback(async () => {
     const diagramElement = document.querySelector('.react-flow');
     if (!diagramElement) {
       alert('Diagram not found');
       return;
     }
 
-    toPng(diagramElement, {
-      cacheBust: true,
-      backgroundColor: '#f9fafb',
-      width: diagramElement.offsetWidth,
-      height: diagramElement.offsetHeight,
-      skipFonts: true,
-    })
-      .then((dataUrl) => {
-        const link = document.createElement('a');
-        link.download = `architecture-diagram-${new Date().toISOString().split('T')[0]}.png`;
-        link.href = dataUrl;
-        link.click();
-      })
-      .catch((err) => {
-        console.error('Failed to export PNG:', err);
-        alert('Failed to export diagram as PNG');
+    try {
+      // Convert external images to data URLs to avoid CORS
+      const images = diagramElement.querySelectorAll('img');
+      const imagePromises = Array.from(images).map(async (img) => {
+        if (img.src && img.src.includes('icon.icepanel.io')) {
+          try {
+            // Use backend proxy to fetch icon
+            const proxyUrl = `${API_URL}/api/icon-proxy?url=${encodeURIComponent(img.src)}`;
+            const response = await fetch(proxyUrl);
+            const blob = await response.blob();
+            const reader = new FileReader();
+            return new Promise((resolve) => {
+              reader.onloadend = () => {
+                img.setAttribute('data-original-src', img.src);
+                img.src = reader.result;
+                resolve();
+              };
+              reader.readAsDataURL(blob);
+            });
+          } catch (error) {
+            console.warn('Failed to load icon:', img.src, error);
+          }
+        }
       });
+
+      await Promise.all(imagePromises);
+
+      // Now export with converted images
+      const dataUrl = await toPng(diagramElement, {
+        cacheBust: true,
+        backgroundColor: '#f9fafb',
+        width: diagramElement.offsetWidth,
+        height: diagramElement.offsetHeight,
+        skipFonts: true,
+      });
+
+      // Restore original image sources
+      images.forEach((img) => {
+        const originalSrc = img.getAttribute('data-original-src');
+        if (originalSrc) {
+          img.src = originalSrc;
+          img.removeAttribute('data-original-src');
+        }
+      });
+
+      const link = document.createElement('a');
+      link.download = `architecture-diagram-${new Date().toISOString().split('T')[0]}.png`;
+      link.href = dataUrl;
+      link.click();
+      alert('✅ Diagram exported as PNG successfully!');
+    } catch (err) {
+      console.error('Failed to export PNG:', err);
+      alert('Failed to export diagram as PNG. Try again or check console for details.');
+    }
   }, []);
 
-  const exportAsPDF = useCallback(() => {
+  const exportAsPDF = useCallback(async () => {
     const diagramElement = document.querySelector('.react-flow');
     if (!diagramElement) {
       alert('Diagram not found');
       return;
     }
 
-    toPng(diagramElement, {
-      cacheBust: true,
-      backgroundColor: '#f9fafb',
-      width: diagramElement.offsetWidth,
-      height: diagramElement.offsetHeight,
-      skipFonts: true,
-    })
-      .then((dataUrl) => {
-        try {
-          const imgWidth = diagramElement.offsetWidth;
-          const imgHeight = diagramElement.offsetHeight;
-          
-          const pdf = new jsPDF({
-            orientation: imgWidth > imgHeight ? 'landscape' : 'portrait',
-            unit: 'px',
-            format: [imgWidth, imgHeight]
-          });
-          
-          pdf.addImage(dataUrl, 'PNG', 0, 0, imgWidth, imgHeight);
-          pdf.save(`architecture-diagram-${new Date().toISOString().split('T')[0]}.pdf`);
-          console.log('PDF exported successfully');
-        } catch (error) {
-          console.error('PDF generation error:', error);
-          alert('Failed to generate PDF: ' + error.message);
+    try {
+      // Convert external images to data URLs to avoid CORS
+      const images = diagramElement.querySelectorAll('img');
+      const imagePromises = Array.from(images).map(async (img) => {
+        if (img.src && img.src.includes('icon.icepanel.io')) {
+          try {
+            // Use backend proxy to fetch icon
+            const proxyUrl = `${API_URL}/api/icon-proxy?url=${encodeURIComponent(img.src)}`;
+            const response = await fetch(proxyUrl);
+            const blob = await response.blob();
+            const reader = new FileReader();
+            return new Promise((resolve) => {
+              reader.onloadend = () => {
+                img.setAttribute('data-original-src', img.src);
+                img.src = reader.result;
+                resolve();
+              };
+              reader.readAsDataURL(blob);
+            });
+          } catch (error) {
+            console.warn('Failed to load icon:', img.src, error);
+          }
         }
-      })
-      .catch((err) => {
-        console.error('Failed to export PDF:', err);
-        alert('Failed to export diagram as PDF: ' + err.message);
       });
+
+      await Promise.all(imagePromises);
+
+      // Now export with converted images
+      const dataUrl = await toPng(diagramElement, {
+        cacheBust: true,
+        backgroundColor: '#f9fafb',
+        width: diagramElement.offsetWidth,
+        height: diagramElement.offsetHeight,
+        skipFonts: true,
+      });
+
+      // Restore original image sources
+      images.forEach((img) => {
+        const originalSrc = img.getAttribute('data-original-src');
+        if (originalSrc) {
+          img.src = originalSrc;
+          img.removeAttribute('data-original-src');
+        }
+      });
+
+      const imgWidth = diagramElement.offsetWidth;
+      const imgHeight = diagramElement.offsetHeight;
+      
+      const pdf = new jsPDF({
+        orientation: imgWidth > imgHeight ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [imgWidth, imgHeight]
+      });
+      
+      pdf.addImage(dataUrl, 'PNG', 0, 0, imgWidth, imgHeight);
+      pdf.save(`architecture-diagram-${new Date().toISOString().split('T')[0]}.pdf`);
+      alert('✅ Diagram exported as PDF successfully!');
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      alert('Failed to export diagram as PDF. Try again or check console for details.');
+    }
   }, []);
 
   const exportAsGIF = useCallback(() => {
@@ -1105,12 +1179,50 @@ function ArchitectureDiagramFlow() {
     // Filter out container-type resources (VPC, subnet, etc.) - they are containers, not resources
     const containerTypes = ['vpc', 'subnet', 'internet-gateway', 'nat-gateway', 'route-table', 'network-acl'];
     const actualResources = filteredResources.filter(r => 
-      !containerTypes.includes(r.type?.toLowerCase())
+      r?.id != null && !containerTypes.includes(r.type?.toLowerCase())
     );
 
+    // Manual mode: filters must still affect the diagram.
+    // Sync only the set of resource nodes (add/remove) while preserving existing node positions.
+    // This prevents "snap back" while still letting filters hide/show resources.
+    if (!autoPositioning && nodes.length > 0) {
+      const allowedIds = new Set(actualResources.map(r => r.id.toString()));
+
+      setNodes(prevNodes => {
+        const safePrevNodes = Array.isArray(prevNodes) ? prevNodes : [];
+        const byId = new Map(safePrevNodes.map(n => [n.id, n]));
+
+        // Keep all non-resource nodes (containers, etc.) as-is.
+        const nextNodes = safePrevNodes.filter(n => {
+          if (!n) return false;
+          if (n.type !== 'resource') return true;
+          return allowedIds.has(n.id);
+        });
+
+        // Add any newly-visible resource nodes that don't exist yet.
+        actualResources.forEach(resource => {
+          const id = resource.id.toString();
+          if (byId.has(id)) return;
+
+          const pos = savedPositions[id] || { x: 100, y: 100 };
+          nextNodes.push({
+            id,
+            type: 'resource',
+            position: pos,
+            data: { resource },
+            style: { zIndex: 10 },
+          });
+        });
+
+        return nextNodes;
+      });
+
+      return;
+    }
+
     // FLAT LAYOUT MODE: Clean positioning with container backgrounds
-    if (useFlatLayout && Object.keys(savedPositions).length > 0) {
-      console.log('📐 Using flat layout mode with saved positions');
+    if (useFlatLayout && Object.keys(savedPositions).length > 0 && autoPositioning) {
+      console.log('📐 Using flat layout mode with saved positions (auto-positioning enabled)');
       
       // Group resources to calculate container boundaries
       const accountGroups = {};
@@ -1197,6 +1309,10 @@ function ArchitectureDiagramFlow() {
     }
     
     // HIERARCHICAL MODE: Nested containers (Account → VPC → Resources)
+    // Note: autoPositioning toggle doesn't regenerate layout - it just controls
+    // whether future layout operations apply structured positioning or not.
+    // This prevents disrupting the current diagram when toggling.
+    
     const accountGroups = {};
     
     // Group resources by account and VPC
@@ -1329,7 +1445,7 @@ function ArchitectureDiagramFlow() {
     });
 
     setNodes(flowNodes);
-  }, [filteredResources, setNodes, savedPositions, useFlatLayout]);
+  }, [filteredResources, setNodes, savedPositions, useFlatLayout, autoPositioning, nodes.length]);
 
   // Filter out hidden nodes
   const visibleNodes = useMemo(() => {
@@ -2008,7 +2124,25 @@ function ArchitectureDiagramFlow() {
                 <ChevronDown className="w-3 h-3" />
               </button>
               {showViewMenu && (
-                <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+                <div className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+                  <button
+                    onClick={() => {
+                      const newState = !autoPositioning;
+                      setAutoPositioning(newState);
+                      localStorage.setItem('diagram_auto_positioning', newState.toString());
+                      setShowViewMenu(false);
+                      alert(newState 
+                        ? '🔒 Auto-positioning enabled\nFuture layout operations will use structured Account/VPC containers.\nCurrent diagram is preserved.' 
+                        : '🔓 Auto-positioning disabled\nYou can now drag resources freely anywhere.\nCurrent diagram is preserved.');
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors border-b border-gray-100"
+                  >
+                    <Layers className={`w-4 h-4 ${autoPositioning ? 'text-green-600' : 'text-orange-600'}`} />
+                    <div className="flex-1">
+                      <div className="font-medium">{autoPositioning ? '✓ ' : ''}Auto-Positioning</div>
+                      <div className="text-xs text-gray-500">{autoPositioning ? 'Structured layout' : 'Free positioning'}</div>
+                    </div>
+                  </button>
                   <button
                     onClick={() => {
                       const newState = !showLegend;
@@ -2030,8 +2164,20 @@ function ArchitectureDiagramFlow() {
                     }}
                     className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
                   >
-                    <Map className={`w-4 h-4 ${showMinimap ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    <MapIcon className={`w-4 h-4 ${showMinimap ? 'text-indigo-600' : 'text-gray-400'}`} />
                     <span>{showMinimap ? '✓ ' : ''}Minimap</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newState = !showKeyboardShortcuts;
+                      setShowKeyboardShortcuts(newState);
+                      localStorage.setItem('diagram_show_shortcuts', newState.toString());
+                      setShowViewMenu(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <span className={`w-4 h-4 flex items-center justify-center ${showKeyboardShortcuts ? 'text-indigo-600' : 'text-gray-400'}`}>⌨️</span>
+                    <span>{showKeyboardShortcuts ? '✓ ' : ''}Keyboard Shortcuts</span>
                   </button>
                 </div>
               )}
@@ -2406,8 +2552,21 @@ function ArchitectureDiagramFlow() {
           )}
 
           {/* Keyboard Shortcuts Help Panel */}
-          <Panel position="bottom-right" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
-            <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">⌨️ Keyboard Shortcuts</div>
+          {showKeyboardShortcuts && (
+            <Panel position="bottom-right" className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-3 m-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-bold text-gray-700 uppercase tracking-wide">⌨️ Keyboard Shortcuts</div>
+                <button
+                  onClick={() => {
+                    setShowKeyboardShortcuts(false);
+                    localStorage.setItem('diagram_show_shortcuts', 'false');
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  title="Hide shortcuts"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             <div className="space-y-1 text-xs text-gray-600">
               <div className="flex items-center justify-between gap-4">
                 <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Delete</span>
@@ -2435,6 +2594,7 @@ function ArchitectureDiagramFlow() {
               </div>
             </div>
           </Panel>
+          )}
 
           {/* AWS Architecture Tier Legend */}
           {showLegend && (
@@ -3153,7 +3313,7 @@ function ArchitectureDiagramFlow() {
                 }}
                 className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
               >
-                <Map className="w-4 h-4" />
+                <MapIcon className="w-4 h-4" />
                 Toggle Legend
               </button>
               <button
@@ -3163,7 +3323,7 @@ function ArchitectureDiagramFlow() {
                 }}
                 className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
               >
-                <Map className="w-4 h-4" />
+                <MapIcon className="w-4 h-4" />
                 Toggle Minimap
               </button>
               <div className="border-t border-gray-200 my-1"></div>
