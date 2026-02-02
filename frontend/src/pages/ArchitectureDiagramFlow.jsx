@@ -248,13 +248,27 @@ function ResourceNode({ data, selected }) {
 }
 
 function VPCNode({ data }) {
+  const displayName = data.customName || data.name || data.label;
+  
+  const handleDoubleClick = (e) => {
+    e.stopPropagation();
+    const newName = prompt('Enter custom name for this VPC:', displayName);
+    if (newName !== null && data.onRename) {
+      data.onRename(data.label, newName);
+    }
+  };
+  
   return (
     <div className="w-full h-full relative">
       {/* VPC Container - Dashed border like official diagrams */}
       <div className="absolute inset-0 rounded-lg border-2 border-dashed border-emerald-500 bg-emerald-50/30" />
       
       {/* VPC Header Label */}
-      <div className="absolute -top-3 left-4 flex items-center gap-2 bg-white px-2 py-0.5">
+      <div 
+        className="absolute -top-3 left-4 flex items-center gap-2 bg-white px-2 py-0.5 cursor-pointer hover:bg-emerald-50 rounded"
+        onDoubleClick={handleDoubleClick}
+        title="Double-click to rename"
+      >
         <img 
           src="https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/VPC.svg" 
           alt="VPC" 
@@ -262,28 +276,46 @@ function VPCNode({ data }) {
         />
         <span className="text-xs font-bold text-emerald-700">VPC</span>
         <span className="text-[10px] text-emerald-600 font-mono">
-          {data.name || data.label}
+          {displayName}
         </span>
+        {data.customName && <span className="text-[8px] text-emerald-400">✏️</span>}
       </div>
     </div>
   );
 }
 
 function AccountNode({ data }) {
+  const displayName = data.customName || data.name || data.label;
+  
+  const handleDoubleClick = (e) => {
+    e.stopPropagation();
+    const newName = prompt('Enter custom name for this Account:', displayName);
+    if (newName !== null && data.onRename) {
+      data.onRename(data.label, newName);
+    }
+  };
+  
   return (
     <div className="w-full h-full relative">
       {/* AWS Cloud Container - Solid border with cloud styling */}
       <div className="absolute inset-0 rounded-lg border-2 border-gray-400 bg-gray-50/50" />
       
       {/* AWS Cloud Header */}
-      <div className="absolute -top-4 left-4 flex items-center gap-2 bg-white px-3 py-1 rounded border border-gray-300">
+      <div 
+        className="absolute -top-4 left-4 flex items-center gap-2 bg-white px-3 py-1 rounded border border-gray-300 cursor-pointer hover:bg-gray-50"
+        onDoubleClick={handleDoubleClick}
+        title="Double-click to rename"
+      >
         <svg className="w-6 h-4" viewBox="0 0 80 50" fill="none">
           <path d="M65 38H20C12 38 5 32 5 24C5 16 12 10 20 10C20 5 26 0 35 0C44 0 52 6 54 14C56 12 60 11 64 12C72 14 78 22 76 30C78 32 80 35 80 38C80 42 77 46 72 46H65V38Z" fill="#252F3E"/>
           <path d="M35 42L25 32H45L35 42Z" fill="#FF9900"/>
         </svg>
         <div>
           <div className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">AWS Cloud</div>
-          <div className="text-[9px] text-gray-500 font-mono">{data.name || data.label}</div>
+          <div className="text-[9px] text-gray-500 font-mono flex items-center gap-1">
+            {displayName}
+            {data.customName && <span className="text-[8px] text-gray-400">✏️</span>}
+          </div>
         </div>
       </div>
     </div>
@@ -438,24 +470,94 @@ function ArchitectureDiagramFlow() {
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(() => {
     return localStorage.getItem('diagram_show_shortcuts') !== 'false';
   });
+
+  // Custom display names for accounts and VPCs (localStorage)
+  const [customAccountNames, setCustomAccountNames] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('diagram_custom_account_names') || '{}');
+    } catch { return {}; }
+  });
+  const [customVPCNames, setCustomVPCNames] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('diagram_custom_vpc_names') || '{}');
+    } catch { return {}; }
+  });
+
+  // State for "Add Relation" submenu
+  const [relationSubmenu, setRelationSubmenu] = useState(null); // { x, y, sourceNode }
+  const [relationTypeSubmenu, setRelationTypeSubmenu] = useState(null); // selected type for resource list
+
+  // Focus Account feature - when set, only show this account
+  const [focusedAccount, setFocusedAccount] = useState(null);
+
+  // Load filter state from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedFilters = localStorage.getItem('diagram_filter_state');
+      if (savedFilters) {
+        const filters = JSON.parse(savedFilters);
+        if (filters.uncheckedAccounts) setUncheckedAccounts(new Set(filters.uncheckedAccounts));
+        if (filters.uncheckedVPCs) setUncheckedVPCs(new Set(filters.uncheckedVPCs));
+        if (filters.uncheckedTypes) setUncheckedTypes(new Set(filters.uncheckedTypes));
+        if (filters.uncheckedRelTypes) setUncheckedRelTypes(new Set(filters.uncheckedRelTypes));
+        if (filters.focusedAccount) setFocusedAccount(filters.focusedAccount);
+        console.log('📂 Loaded saved filter state');
+      }
+    } catch (e) {
+      console.warn('Failed to load filter state:', e);
+    }
+  }, []);
+
+  // Save filter state to localStorage when it changes
+  useEffect(() => {
+    try {
+      const filterState = {
+        uncheckedAccounts: Array.from(uncheckedAccounts),
+        uncheckedVPCs: Array.from(uncheckedVPCs),
+        uncheckedTypes: Array.from(uncheckedTypes),
+        uncheckedRelTypes: Array.from(uncheckedRelTypes),
+        focusedAccount: focusedAccount,
+      };
+      localStorage.setItem('diagram_filter_state', JSON.stringify(filterState));
+    } catch (e) {
+      console.warn('Failed to save filter state:', e);
+    }
+  }, [uncheckedAccounts, uncheckedVPCs, uncheckedTypes, uncheckedRelTypes, focusedAccount]);
+
+  const getAccountKey = useCallback((r) => {
+    if (r?.account_id) return r.account_id;
+    if (r?.account_name) return r.account_name;
+    return 'unknown';
+  }, []);
   
   // Get unique values for filters
   const accounts = useMemo(() => {
-    const accountSet = new Set(resources.map(r => r.account_id).filter(Boolean));
-    return Array.from(accountSet);
-  }, [resources]);
+    const accountSet = new Set(resources.map(r => getAccountKey(r)).filter(Boolean));
+    const accountList = Array.from(accountSet);
+    
+    // Diagnostic: log all unique accounts found
+    console.log(`🏢 ACCOUNTS FOUND: ${accountList.length}`, accountList);
+    resources.forEach(r => {
+      const key = getAccountKey(r);
+      if (!accountList.includes(key)) {
+        console.warn(`⚠️ Resource ${r.id} has unmapped account: account_id=${r.account_id}, account_name=${r.account_name}, key=${key}`);
+      }
+    });
+    
+    return accountList;
+  }, [resources, getAccountKey]);
   
   // VPCs filtered by selected accounts (cascading)
   const vpcs = useMemo(() => {
     const visibleAccounts = accounts.filter(acc => !uncheckedAccounts.has(acc));
     const vpcSet = new Set(
       resources
-        .filter(r => visibleAccounts.includes(r.account_id))
+        .filter(r => visibleAccounts.includes(getAccountKey(r)))
         .map(r => r.vpc_id)
         .filter(Boolean)
     );
     return Array.from(vpcSet);
-  }, [resources, accounts, uncheckedAccounts]);
+  }, [resources, accounts, uncheckedAccounts, getAccountKey]);
   
   // Types filtered by selected accounts and VPCs (cascading)
   // Static list of all AWS resource types (always visible in filter)
@@ -487,7 +589,9 @@ function ArchitectureDiagramFlow() {
     const withoutVpc = resources.filter(r => !r.vpc_id).length;
     
     const filtered = resources.filter(r => {
-      if (uncheckedAccounts.has(r.account_id)) return false;
+      // Focus Account takes priority - if set, only show resources from that account
+      if (focusedAccount && getAccountKey(r) !== focusedAccount) return false;
+      if (uncheckedAccounts.has(getAccountKey(r))) return false;
       // Only filter by VPC if resource HAS a VPC (don't filter global services like S3, CodePipeline, etc.)
       if (r.vpc_id && uncheckedVPCs.has(r.vpc_id)) return false;
       if (uncheckedTypes.has(r.type)) return false;
@@ -498,12 +602,10 @@ function ArchitectureDiagramFlow() {
     console.log(`   - With VPC: ${withVpc}, Without VPC: ${withoutVpc}`);
     console.log(`   - Resource types:`, typeCounts);
     console.log(`🔍 Filter results: ${filtered.length}/${resources.length} resources visible`);
-    console.log(`   - Unchecked accounts: ${uncheckedAccounts.size}`, Array.from(uncheckedAccounts));
-    console.log(`   - Unchecked VPCs: ${uncheckedVPCs.size}`, Array.from(uncheckedVPCs));
-    console.log(`   - Unchecked types: ${uncheckedTypes.size}`, Array.from(uncheckedTypes));
+    if (focusedAccount) console.log(`   - Focused on account: ${focusedAccount}`);
     
     return filtered;
-  }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes]);
+  }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes, getAccountKey, focusedAccount]);
 
   // Get unique relationship types for filtering
   const relationshipTypes = useMemo(() => {
@@ -517,13 +619,8 @@ function ArchitectureDiagramFlow() {
   }, [relationships, uncheckedRelTypes]);
 
   useEffect(() => {
-    // FORCE CLEAR ALL FILTERS ON MOUNT - Show all resources by default
-    console.log('🔄 DIAGRAM VERSION 2.0 - ALL FILTERS CLEARED ON MOUNT');
-    setUncheckedAccounts(new Set());
-    setUncheckedVPCs(new Set());
-    setUncheckedTypes(new Set());
-    setUncheckedRelTypes(new Set());
-    
+    // Load resources and relationships on mount
+    // Filter state is now loaded from localStorage in a separate useEffect
     fetchResources();
     fetchRelationships();
     loadSavedPositions();
@@ -1130,10 +1227,35 @@ function ArchitectureDiagramFlow() {
   const fetchResources = async () => {
     try {
       const token = localStorage.getItem('access_token');
-      const response = await axios.get(`${API_URL}/api/resources`, {
+      const response = await axios.get(`${API_URL}/api/resources/?limit=10000`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       console.log(`📊 Fetched ${response.data.length} total resources from database`);
+      
+      // Diagnostic: log ALL unique account_id and account_name values from raw data
+      const rawAccountIds = new Set();
+      const rawAccountNames = new Set();
+      response.data.forEach(r => {
+        if (r.account_id) rawAccountIds.add(r.account_id);
+        if (r.account_name) rawAccountNames.add(r.account_name);
+      });
+      console.log('🔍 RAW account_id values from DB:', Array.from(rawAccountIds));
+      console.log('🔍 RAW account_name values from DB:', Array.from(rawAccountNames));
+      
+      // Check for account ending in 611
+      const has611 = response.data.some(r => 
+        (r.account_id && r.account_id.toString().includes('611')) ||
+        (r.account_name && r.account_name.toString().includes('611'))
+      );
+      console.log('🔍 Has account with 611:', has611);
+      if (has611) {
+        const resources611 = response.data.filter(r => 
+          (r.account_id && r.account_id.toString().includes('611')) ||
+          (r.account_name && r.account_name.toString().includes('611'))
+        );
+        console.log('🔍 Resources with 611 account:', resources611.length, resources611.slice(0, 3));
+      }
+      
       setResources(response.data);
     } catch (error) {
       console.error('Failed to fetch resources:', error);
@@ -1167,6 +1289,20 @@ function ArchitectureDiagramFlow() {
     }
   };
 
+  // Save custom account name
+  const saveCustomAccountName = useCallback((accountKey, customName) => {
+    const newNames = { ...customAccountNames, [accountKey]: customName };
+    setCustomAccountNames(newNames);
+    localStorage.setItem('diagram_custom_account_names', JSON.stringify(newNames));
+  }, [customAccountNames]);
+
+  // Save custom VPC name
+  const saveCustomVPCName = useCallback((vpcId, customName) => {
+    const newNames = { ...customVPCNames, [vpcId]: customName };
+    setCustomVPCNames(newNames);
+    localStorage.setItem('diagram_custom_vpc_names', JSON.stringify(newNames));
+  }, [customVPCNames]);
+
   // Convert resources to React Flow nodes - supports both hierarchical and flat layout modes
   useEffect(() => {
     if (filteredResources.length === 0) {
@@ -1178,8 +1314,17 @@ function ArchitectureDiagramFlow() {
     
     // Filter out container-type resources (VPC, subnet, etc.) - they are containers, not resources
     const containerTypes = ['vpc', 'subnet', 'internet-gateway', 'nat-gateway', 'route-table', 'network-acl'];
+    const getAccountKey = (r) => {
+      if (r?.account_id) return r.account_id;
+      if (r?.account_name) return r.account_name;
+      return 'unknown';
+    };
     const actualResources = filteredResources.filter(r => 
       r?.id != null && !containerTypes.includes(r.type?.toLowerCase())
+    );
+
+    const accountsInFiltered = Array.from(
+      new Set(filteredResources.map(r => getAccountKey(r)))
     );
 
     // Manual mode: filters must still affect the diagram.
@@ -1227,11 +1372,16 @@ function ArchitectureDiagramFlow() {
       // Group resources to calculate container boundaries
       const accountGroups = {};
       actualResources.forEach(resource => {
-        const accountId = resource.account_id || 'unknown';
+        const accountId = getAccountKey(resource);
         const vpcId = resource.vpc_id || 'no-vpc';
         if (!accountGroups[accountId]) accountGroups[accountId] = {};
         if (!accountGroups[accountId][vpcId]) accountGroups[accountId][vpcId] = [];
         accountGroups[accountId][vpcId].push(resource);
+      });
+
+      // Ensure every account that exists in filtered resources appears (even if it only has container-type records)
+      accountsInFiltered.forEach(accountId => {
+        if (!accountGroups[accountId]) accountGroups[accountId] = {};
       });
 
       // Calculate bounding boxes for containers based on resource positions
@@ -1258,7 +1408,12 @@ function ArchitectureDiagramFlow() {
               id: `vpc-${vpcId}`,
               type: 'vpc',
               position: { x: vpcMinX - 30, y: vpcMinY - 50 },
-              data: { label: vpcId, name: vpcName },
+              data: { 
+                label: vpcId, 
+                name: vpcName,
+                customName: customVPCNames[vpcId],
+                onRename: saveCustomVPCName
+              },
               style: {
                 width: Math.max(200, vpcMaxX - vpcMinX + 60),
                 height: Math.max(150, vpcMaxY - vpcMinY + 80),
@@ -1276,14 +1431,24 @@ function ArchitectureDiagramFlow() {
         
         // Add Account container with padding
         const accountName = Object.values(vpcs).flat()[0]?.account_name || '';
+        const hasContent = Number.isFinite(accountMinX) && Number.isFinite(accountMinY);
+        const fallbackIndex = accountsInFiltered.indexOf(accountId);
+        const fallbackX = 40 + Math.max(0, fallbackIndex) * 360;
+        const fallbackY = 40;
+
         flowNodes.push({
           id: `account-${accountId}`,
           type: 'account',
-          position: { x: accountMinX - 40, y: accountMinY - 60 },
-          data: { label: accountId, name: accountName },
+          position: hasContent ? { x: accountMinX - 40, y: accountMinY - 60 } : { x: fallbackX, y: fallbackY },
+          data: { 
+            label: accountId, 
+            name: accountName,
+            customName: customAccountNames[accountId],
+            onRename: saveCustomAccountName
+          },
           style: {
-            width: Math.max(300, accountMaxX - accountMinX + 80),
-            height: Math.max(200, accountMaxY - accountMinY + 100),
+            width: hasContent ? Math.max(300, accountMaxX - accountMinX + 80) : 320,
+            height: hasContent ? Math.max(200, accountMaxY - accountMinY + 90) : 180,
             zIndex: 0,
           },
           draggable: false,
@@ -1317,7 +1482,7 @@ function ArchitectureDiagramFlow() {
     
     // Group resources by account and VPC
     actualResources.forEach(resource => {
-      const accountId = resource.account_id || 'unknown';
+      const accountId = getAccountKey(resource);
       const vpcId = resource.vpc_id || 'no-vpc';
       
       if (!accountGroups[accountId]) {
@@ -1328,6 +1493,11 @@ function ArchitectureDiagramFlow() {
       }
       accountGroups[accountId][vpcId].push(resource);
     });
+
+    // Ensure every account that exists in filtered resources appears (even if it only has container-type records)
+    accountsInFiltered.forEach(accountId => {
+      if (!accountGroups[accountId]) accountGroups[accountId] = {};
+    });
     
     let accountX = 40;
     const accountY = 40;
@@ -1336,6 +1506,12 @@ function ArchitectureDiagramFlow() {
     Object.entries(accountGroups).forEach(([accountId, vpcs]) => {
       let maxAccountWidth = 0;
       let vpcY = 120; // Relative to account
+      const hasAnyResourceNodes = Object.keys(vpcs).length > 0;
+      if (!hasAnyResourceNodes) {
+        // Ensure empty accounts don't overlap due to 0-width calculations
+        maxAccountWidth = 320;
+        vpcY = 150;
+      }
       
       // First pass: Add Account container
       const accountNodeId = `account-${accountId}`;
@@ -1352,7 +1528,7 @@ function ArchitectureDiagramFlow() {
         const vpcWidth = Math.max(900, resourcesPerRow * resourceWidth + (resourcesPerRow + 1) * resourceGap);
         const vpcHeight = Math.max(400, rows * resourceHeight + (rows + 1) * resourceGap + 80);
         
-        // Add VPC container node (child of account)
+        // Add VPC container node - absolute position for consistency
         if (vpcId !== 'no-vpc') {
           const vpcNodeId = `vpc-${vpcId}`;
           // Try to find VPC name from resources
@@ -1360,27 +1536,32 @@ function ArchitectureDiagramFlow() {
           flowNodes.push({
             id: vpcNodeId,
             type: 'vpc',
-            position: { x: 60, y: vpcY }, // Relative to account
-            data: { label: vpcId, name: vpcName },
+            position: { x: accountX + 60, y: accountY + vpcY }, // Absolute position
+            data: { 
+              label: vpcId, 
+              name: vpcName,
+              customName: customVPCNames[vpcId],
+              onRename: saveCustomVPCName
+            },
             style: {
               width: vpcWidth,
               height: vpcHeight,
               zIndex: 1,
             },
-            parentNode: accountNodeId,
-            extent: 'parent',
+            // No parentNode - absolute positioning
             draggable: false,
           });
           
-          // Add resource nodes inside VPC (children of VPC)
+          // Add resource nodes inside VPC - absolute positions for free dragging
           vpcResources.forEach((resource, idx) => {
             const col = idx % resourcesPerRow;
             const row = Math.floor(idx / resourcesPerRow);
             
             const resourceId = resource.id.toString();
+            // Calculate absolute position (accountX + VPC offset + resource offset)
             const defaultPosition = {
-              x: resourceGap + col * (resourceWidth + resourceGap),
-              y: 70 + row * (resourceHeight + resourceGap), // Relative to VPC
+              x: accountX + 60 + resourceGap + col * (resourceWidth + resourceGap),
+              y: accountY + vpcY + 70 + row * (resourceHeight + resourceGap),
             };
             
             flowNodes.push({
@@ -1388,23 +1569,23 @@ function ArchitectureDiagramFlow() {
               type: 'resource',
               position: defaultPosition,
               data: { resource },
-              parentNode: vpcNodeId,
-              extent: 'parent',
+              // No parentNode - allows free dragging across diagram
               style: {
                 zIndex: 10,
               },
             });
           });
         } else {
-          // Resources without VPC (direct children of account)
+          // Resources without VPC - absolute positions
           vpcResources.forEach((resource, idx) => {
             const col = idx % resourcesPerRow;
             const row = Math.floor(idx / resourcesPerRow);
             
             const resourceId = resource.id.toString();
+            // Calculate absolute position
             const defaultPosition = {
-              x: 80 + resourceGap + col * (resourceWidth + resourceGap),
-              y: vpcY + row * (resourceHeight + resourceGap),
+              x: accountX + 80 + resourceGap + col * (resourceWidth + resourceGap),
+              y: accountY + vpcY + row * (resourceHeight + resourceGap),
             };
             
             flowNodes.push({
@@ -1412,8 +1593,7 @@ function ArchitectureDiagramFlow() {
               type: 'resource',
               position: defaultPosition,
               data: { resource },
-              parentNode: accountNodeId,
-              extent: 'parent',
+              // No parentNode - allows free dragging across diagram
               style: {
                 zIndex: 10,
               },
@@ -1432,10 +1612,15 @@ function ArchitectureDiagramFlow() {
         id: accountNodeId,
         type: 'account',
         position: { x: accountX, y: accountY },
-        data: { label: accountId, name: accountName },
+        data: { 
+          label: accountId, 
+          name: accountName,
+          customName: customAccountNames[accountId],
+          onRename: saveCustomAccountName
+        },
         style: {
-          width: maxAccountWidth + 120,
-          height: vpcY + 30,
+          width: hasAnyResourceNodes ? maxAccountWidth + 120 : 320,
+          height: hasAnyResourceNodes ? vpcY + 30 : 180,
           zIndex: 0,
         },
         draggable: false,
@@ -1445,7 +1630,7 @@ function ArchitectureDiagramFlow() {
     });
 
     setNodes(flowNodes);
-  }, [filteredResources, setNodes, savedPositions, useFlatLayout, autoPositioning, nodes.length]);
+  }, [filteredResources, setNodes, savedPositions, useFlatLayout, autoPositioning, nodes.length, customAccountNames, customVPCNames, saveCustomAccountName, saveCustomVPCName]);
 
   // Filter out hidden nodes
   const visibleNodes = useMemo(() => {
@@ -1637,7 +1822,11 @@ function ArchitectureDiagramFlow() {
 
   // Close context menu when clicking outside
   useEffect(() => {
-    const handleClick = () => setContextMenu(null);
+    const handleClick = () => {
+      setContextMenu(null);
+      setRelationSubmenu(null);
+      setRelationTypeSubmenu(null);
+    };
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
   }, []);
@@ -1727,6 +1916,43 @@ function ArchitectureDiagramFlow() {
   
   const showAllNodes = useCallback(() => {
     setHiddenNodes(new Set());
+  }, []);
+
+  // Get resources grouped by type (for Add Relation submenu)
+  const resourcesByType = useMemo(() => {
+    const grouped = {};
+    filteredResources.forEach(r => {
+      const type = r.type || 'unknown';
+      if (!grouped[type]) grouped[type] = [];
+      grouped[type].push(r);
+    });
+    return grouped;
+  }, [filteredResources]);
+
+  // Create relationship from context menu
+  const createRelationshipFromMenu = useCallback(async (sourceId, targetId) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      await axios.post(`${API_URL}/api/relationships`, {
+        source_resource_id: parseInt(sourceId),
+        target_resource_id: parseInt(targetId),
+        relationship_type: 'connects_to',
+        description: 'Created from diagram'
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh relationships
+      const response = await axios.get(`${API_URL}/api/relationships`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setRelationships(response.data || []);
+      
+      alert('✅ Relationship created successfully!');
+    } catch (error) {
+      console.error('Failed to create relationship:', error);
+      alert('Failed to create relationship: ' + (error.response?.data?.detail || error.message));
+    }
   }, []);
   
   // Handle right-click context menu
@@ -2389,6 +2615,36 @@ function ArchitectureDiagramFlow() {
               </div>
             )}
           </div>
+
+          {/* Focus Account Dropdown */}
+          <div className="relative">
+            <select
+              value={focusedAccount || ''}
+              onChange={(e) => setFocusedAccount(e.target.value || null)}
+              className={`px-3 py-1.5 border rounded-lg text-sm font-medium ${
+                focusedAccount 
+                  ? 'border-purple-500 bg-purple-50 text-purple-700' 
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <option value="">All Accounts</option>
+              {accounts.map(acc => (
+                <option key={acc} value={acc}>
+                  🎯 Focus: {customAccountNames[acc] || acc}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {focusedAccount && (
+            <button
+              onClick={() => setFocusedAccount(null)}
+              className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium hover:bg-purple-200"
+            >
+              <X className="w-3 h-3" />
+              Clear Focus
+            </button>
+          )}
 
           <div className="text-sm text-gray-600">
             Showing {filteredResources.length} resources • {filteredRelationships.length} edges
@@ -3111,6 +3367,59 @@ function ArchitectureDiagramFlow() {
                 <Eye className="w-4 h-4" />
                 {hiddenNodes.has(contextMenuNode.id) ? 'Show' : 'Hide'} Node
               </button>
+              {contextMenuNode.type === 'resource' && (
+                <>
+                  <button
+                    onClick={() => setRelationSubmenu(relationSubmenu ? null : { sourceId: contextMenuNode.id })}
+                    className="w-full px-4 py-2 text-left text-sm hover:bg-blue-50 flex items-center gap-2 text-blue-600"
+                  >
+                    <Network className="w-4 h-4" />
+                    Add Relation {relationSubmenu ? '▼' : '→'}
+                  </button>
+                  {/* Inline Submenu: Resource Types - Scrollable */}
+                  {relationSubmenu && (
+                    <div className="border-t border-gray-100 bg-gray-50 max-h-[300px] overflow-y-auto">
+                      <div className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase sticky top-0 bg-gray-50">Select Type</div>
+                      {Object.entries(resourcesByType).map(([type, typeResources]) => (
+                        <div key={type}>
+                          <button
+                            onClick={() => setRelationTypeSubmenu(relationTypeSubmenu === type ? null : type)}
+                            className="w-full px-3 py-1.5 text-left text-sm hover:bg-white flex items-center justify-between"
+                          >
+                            <span className="capitalize">{type}</span>
+                            <span className="text-xs text-gray-400">({typeResources.length}) {relationTypeSubmenu === type ? '▼' : '→'}</span>
+                          </button>
+                          {/* Resources of this type - Scrollable */}
+                          {relationTypeSubmenu === type && (
+                            <div className="bg-white border-l-2 border-blue-300 ml-2 max-h-[200px] overflow-y-auto">
+                              {typeResources
+                                .filter(r => r.id.toString() !== contextMenuNode.id)
+                                .map(r => (
+                                  <button
+                                    key={r.id}
+                                    onClick={() => {
+                                      createRelationshipFromMenu(contextMenuNode.id, r.id.toString());
+                                      setContextMenu(null);
+                                      setRelationSubmenu(null);
+                                      setRelationTypeSubmenu(null);
+                                    }}
+                                    className="w-full px-3 py-1 text-left text-xs hover:bg-blue-50 truncate"
+                                    title={r.name}
+                                  >
+                                    {r.name || r.resource_id || `${type}-${r.id}`}
+                                  </button>
+                                ))}
+                              {typeResources.filter(r => r.id.toString() !== contextMenuNode.id).length === 0 && (
+                                <div className="px-3 py-1 text-xs text-gray-400 italic">No other resources</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
               <div className="border-t border-gray-200 my-1"></div>
               <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase">Align</div>
               <button
@@ -3372,22 +3681,45 @@ function ArchitectureDiagramFlow() {
             <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium text-gray-700">Relationship Type</label>
-                <p className="text-sm text-gray-900 mt-1 font-mono bg-gray-50 px-3 py-2 rounded">
-                  {selectedEdge.data?.relationship_type || 'Unknown'}
-                </p>
+                <select
+                  defaultValue={selectedEdge.data?.relationship_type || 'connects_to'}
+                  onChange={async (e) => {
+                    const newType = e.target.value;
+                    try {
+                      const token = localStorage.getItem('access_token');
+                      const relationshipId = selectedEdge.data?.id;
+                      if (relationshipId) {
+                        await axios.put(`${API_URL}/api/relationships/${relationshipId}`, {
+                          relationship_type: newType
+                        }, {
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        // Refresh relationships
+                        fetchRelationships();
+                        alert('✅ Relationship type updated!');
+                      }
+                    } catch (error) {
+                      console.error('Failed to update relationship:', error);
+                      alert('Failed to update: ' + (error.response?.data?.detail || error.message));
+                    }
+                  }}
+                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="connects_to">connects_to</option>
+                  <option value="depends_on">depends_on</option>
+                  <option value="uses">uses</option>
+                  <option value="triggers">triggers</option>
+                  <option value="streams_to">streams_to</option>
+                  <option value="deploy_to">deploy_to</option>
+                  <option value="deployed_with">deployed_with</option>
+                  <option value="references">references</option>
+                </select>
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700">Label</label>
-                <p className="text-sm text-gray-900 mt-1 bg-gray-50 px-3 py-2 rounded">
-                  {selectedEdge.label || 'No label'}
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700">Direction</label>
-                <p className="text-sm text-gray-900 mt-1 bg-gray-50 px-3 py-2 rounded">
-                  {selectedEdge.data?.direction || 'unidirectional'}
+                <label className="text-sm font-medium text-gray-700">Source → Target</label>
+                <p className="text-sm text-gray-900 mt-1 bg-gray-50 px-3 py-2 rounded font-mono">
+                  {selectedEdge.source} → {selectedEdge.target}
                 </p>
               </div>
 
@@ -3402,7 +3734,7 @@ function ArchitectureDiagramFlow() {
                   }}
                   className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm"
                 >
-                  Delete Relationship
+                  Delete
                 </button>
                 <button
                   onClick={() => {
