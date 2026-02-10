@@ -60,8 +60,8 @@ Write-Host "  Type:      SQLite (file-based, no Docker required)" -ForegroundCol
 Write-Host "  Location:  backend/data/aws_architect.db" -ForegroundColor White
 Write-Host ""
 Write-Host "Services:" -ForegroundColor Cyan
-Write-Host "  Backend:   https://localhost:8000" -ForegroundColor White
-Write-Host "  API Docs:  https://localhost:8000/docs" -ForegroundColor White
+Write-Host "  Backend:   https://localhost:8800" -ForegroundColor White
+Write-Host "  API Docs:  https://localhost:8800/docs" -ForegroundColor White
 Write-Host ""
 Write-Host "Now start the frontend in another terminal:" -ForegroundColor Yellow
 Write-Host "  .\START-FRONTEND.ps1" -ForegroundColor White
@@ -88,4 +88,4 @@ Write-Host "Starting FastAPI server with HTTPS..." -ForegroundColor Yellow
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-keyfile="certs/key.pem" --ssl-certfile="certs/cert.pem"
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8800 --ssl-keyfile="certs/key.pem" --ssl-certfile="certs/cert.pem"
