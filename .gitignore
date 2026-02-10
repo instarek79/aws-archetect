@@ -58,6 +58,14 @@ logs/
 *.sqlite
 *.sqlite3
 
+# SSL Certificates and Private Keys (SECURITY)
+*.pem
+*.key
+*.crt
+*.cer
+certs/
+ssl/
+
 # OS
 Thumbs.db
 .DS_Store
