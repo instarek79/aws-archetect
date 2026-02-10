@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.database import engine, Base
+from app.database import engine, Base, is_sqlite
 from app.routers import auth, resources, ai, import_router, relationships, ai_layout, relationship_discovery, iac_export, aws_connect, icon_proxy
 import logging
 
@@ -11,9 +11,12 @@ logger = logging.getLogger(__name__)
 
 # Create database tables with error handling
 try:
+    db_type = "SQLite" if is_sqlite else "PostgreSQL"
+    logger.info(f"Database type: {db_type}")
+    logger.info(f"Database URL: {settings.DATABASE_URL}")
     logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
-    logger.info("✅ Database tables created successfully")
+    logger.info(f"✅ Database tables created successfully ({db_type})")
 except Exception as e:
     logger.error(f"❌ Database initialization error: {e}")
     raise

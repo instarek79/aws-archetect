@@ -1,14 +1,19 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+import os
 
 
 class Settings(BaseSettings):
-    # Database
+    # Database - SQLite (file-based, no Docker required)
+    DATABASE_TYPE: str = "sqlite"  # sqlite or postgresql
+    SQLITE_DB_PATH: str = "data/aws_architect.db"  # SQLite database file path
+    
+    # Legacy PostgreSQL settings (kept for migration purposes)
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "auth_db"
-    POSTGRES_HOST: str = "127.0.0.1"  # Use 127.0.0.1 instead of localhost to force IPv4
-    POSTGRES_PORT: int = 5433  # Docker PostgreSQL on port 5433 (avoid conflict with local PostgreSQL on 5432)
+    POSTGRES_HOST: str = "127.0.0.1"
+    POSTGRES_PORT: int = 5433
     
     # JWT
     JWT_SECRET_KEY: str = "your-secret-key-change-in-production"
@@ -36,6 +41,19 @@ class Settings(BaseSettings):
     
     @property
     def DATABASE_URL(self) -> str:
+        if self.DATABASE_TYPE == "sqlite":
+            # Get absolute path for SQLite database
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            db_path = os.path.join(base_dir, self.SQLITE_DB_PATH)
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            return f"sqlite:///{db_path}"
+        else:
+            return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+    
+    @property
+    def POSTGRES_DATABASE_URL(self) -> str:
+        """PostgreSQL URL for migration purposes"""
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
     
     class Config:

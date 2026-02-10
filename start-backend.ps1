@@ -1,5 +1,5 @@
 # ============================================================================
-#  START DATABASE + BACKEND
+#  START BACKEND (SQLite - No Docker Required!)
 #  Run this first before starting frontend
 # ============================================================================
 
@@ -7,58 +7,40 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "           STARTING DATABASE + BACKEND" -ForegroundColor Cyan
+Write-Host "           STARTING BACKEND (SQLite Database)" -ForegroundColor Cyan
 Write-Host "================================================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Navigate to backend
+Set-Location -Path $PSScriptRoot
+cd backend
+
 # ============================================================================
-# STEP 1: Start PostgreSQL (Docker)
+# STEP 1: Setup Virtual Environment
 # ============================================================================
-Write-Host "[1/2] Starting PostgreSQL (Docker)..." -ForegroundColor Green
+Write-Host "[1/2] Setting up environment..." -ForegroundColor Green
 
-# Stop old containers
-Write-Host "  Stopping old containers..." -ForegroundColor Yellow
-Start-Process -FilePath "docker-compose" -ArgumentList "down" -NoNewWindow -Wait -RedirectStandardOutput "$env:TEMP\docker-out.txt" -RedirectStandardError "$env:TEMP\docker-err.txt"
-
-# Start PostgreSQL
-Write-Host "  Starting PostgreSQL container..." -ForegroundColor Yellow
-Start-Process -FilePath "docker-compose" -ArgumentList "up","-d" -NoNewWindow -Wait -RedirectStandardOutput "$env:TEMP\docker-out.txt" -RedirectStandardError "$env:TEMP\docker-err.txt"
-
-# Wait for database to be healthy
-Write-Host "  Waiting for database to be ready" -NoNewline -ForegroundColor Yellow
-$maxAttempts = 30
-$attempt = 0
-$isHealthy = $false
-
-while ($attempt -lt $maxAttempts -and -not $isHealthy) {
-    $attempt++
-    $status = docker inspect aws_architect_postgres --format='{{.State.Health.Status}}' 2>$null
-    
-    if ($status -eq "healthy") {
-        $isHealthy = $true
-        Write-Host " Ready!" -ForegroundColor Green
-    } else {
-        Write-Host "." -NoNewline -ForegroundColor Gray
-        Start-Sleep -Seconds 1
-    }
+# Create venv if it doesn't exist
+if (-not (Test-Path "venv")) {
+    Write-Host "  Creating virtual environment..." -ForegroundColor Yellow
+    python -m venv venv
 }
 
-Write-Host ""
+# Activate venv
+Write-Host "  Activating virtual environment..." -ForegroundColor Yellow
+.\venv\Scripts\Activate.ps1
 
-if (-not $isHealthy) {
-    Write-Host "  ERROR: PostgreSQL failed to start!" -ForegroundColor Red
-    Write-Host "  Check Docker logs: docker logs aws_architect_postgres" -ForegroundColor Yellow
-    exit 1
-}
+# Set environment variables for SQLite
+$env:DATABASE_TYPE = 'sqlite'
+$env:SQLITE_DB_PATH = 'data/aws_architect.db'
+$env:OLLAMA_BASE_URL = 'http://localhost:11434/v1'
+$env:OLLAMA_MODEL = 'qwen2.5'
 
-# Create database if it doesn't exist
-Write-Host "  Creating database..." -ForegroundColor Yellow
-$dbExists = docker exec aws_architect_postgres psql -U postgres -lqt 2>$null | Select-String -Pattern "auth_db"
-if (-not $dbExists) {
-    docker exec aws_architect_postgres psql -U postgres -c "CREATE DATABASE auth_db;" 2>$null | Out-Null
-    Write-Host "  Database created!" -ForegroundColor Green
-} else {
-    Write-Host "  Database already exists!" -ForegroundColor Green
+# Ensure data directory exists
+$dataDir = Join-Path $PSScriptRoot "backend\data"
+if (-not (Test-Path $dataDir)) {
+    New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+    Write-Host "  Created data directory: $dataDir" -ForegroundColor Yellow
 }
 
 Write-Host ""
@@ -69,29 +51,15 @@ Write-Host ""
 Write-Host "[2/2] Starting Backend Server..." -ForegroundColor Green
 Write-Host ""
 
-# Navigate to backend
-cd backend
-
-# Activate venv
-Write-Host "Activating virtual environment..." -ForegroundColor Yellow
-.\venv\Scripts\Activate.ps1
-
-# Set environment variables
-$env:POSTGRES_HOST = '127.0.0.1'
-$env:POSTGRES_PORT = '5433'
-$env:POSTGRES_USER = 'postgres'
-$env:POSTGRES_PASSWORD = 'postgres'
-$env:POSTGRES_DB = 'auth_db'
-$env:OLLAMA_BASE_URL = 'http://localhost:11434/v1'
-$env:OLLAMA_MODEL = 'qwen2.5'
-
+Write-Host "================================================================================" -ForegroundColor Green
+Write-Host "  BACKEND RUNNING (SQLite)" -ForegroundColor Green
+Write-Host "================================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "================================================================================" -ForegroundColor Green
-Write-Host "  DATABASE + BACKEND RUNNING" -ForegroundColor Green
-Write-Host "================================================================================" -ForegroundColor Green
+Write-Host "Database:" -ForegroundColor Cyan
+Write-Host "  Type:      SQLite (file-based, no Docker required)" -ForegroundColor White
+Write-Host "  Location:  backend/data/aws_architect.db" -ForegroundColor White
 Write-Host ""
 Write-Host "Services:" -ForegroundColor Cyan
-Write-Host "  Database:  postgresql://localhost:5433/auth_db (Docker)" -ForegroundColor White
 Write-Host "  Backend:   https://localhost:8000" -ForegroundColor White
 Write-Host "  API Docs:  https://localhost:8000/docs" -ForegroundColor White
 Write-Host ""
