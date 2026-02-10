@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import axios from '../utils/axiosConfig';
 import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity, Upload, Shield, Cloud, Layers, BarChart3, TrendingUp, AlertTriangle, CheckCircle, Clock, Eye, DollarSign, Compass } from 'lucide-react';
+import NavBar from '../components/NavBar';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -575,6 +576,9 @@ function Dashboard() {
 
   return (
     <div className={`min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 ${isRTL ? 'font-arabic' : ''}`} dir={isRTL ? 'rtl' : 'ltr'}>
+      {/* Navigation Bar */}
+      <NavBar />
+      
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">

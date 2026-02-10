@@ -28,6 +28,7 @@ import ResourcePalette from '../components/ResourcePalette';
 import ResourceConfigPanel from '../components/ResourceConfigPanel';
 import TemplateLibrary from '../components/TemplateLibrary';
 import ValidationPanel from '../components/ValidationPanel';
+import NavBar from '../components/NavBar';
 import { calculateTotalCost, formatCost } from '../utils/costEstimation';
 import { generateCloudFormation, generateTerraform } from '../utils/iacExport';
 
@@ -471,6 +472,28 @@ function ArchitectureDiagramFlow() {
     return localStorage.getItem('diagram_show_shortcuts') !== 'false';
   });
 
+  // Advanced diagram features
+  const [snapToGrid, setSnapToGrid] = useState(() => {
+    return localStorage.getItem('diagram_snap_to_grid') === 'true';
+  });
+  const [gridSize, setGridSize] = useState(() => {
+    return parseInt(localStorage.getItem('diagram_grid_size') || '20');
+  });
+  const [showGrid, setShowGrid] = useState(() => {
+    return localStorage.getItem('diagram_show_grid') !== 'false';
+  });
+  
+  // Quick Actions panel visibility
+  const [showQuickActions, setShowQuickActions] = useState(() => {
+    return localStorage.getItem('diagram_show_quick_actions') !== 'false';
+  });
+  
+  // Relationship creation popup
+  const [showRelationshipPopup, setShowRelationshipPopup] = useState(false);
+  const [newRelSource, setNewRelSource] = useState('');
+  const [newRelTarget, setNewRelTarget] = useState('');
+  const [newRelType, setNewRelType] = useState('uses');
+
   // Custom display names for accounts and VPCs (localStorage)
   const [customAccountNames, setCustomAccountNames] = useState(() => {
     try {
@@ -489,6 +512,11 @@ function ArchitectureDiagramFlow() {
 
   // Focus Account feature - when set, only show this account
   const [focusedAccount, setFocusedAccount] = useState(null);
+  
+  // Advanced Focus Views
+  const [focusedRelationType, setFocusedRelationType] = useState(null); // Focus on specific relationship type
+  const [focusedResourceType, setFocusedResourceType] = useState(null); // Focus on specific resource type
+  const [showOnlyConnected, setShowOnlyConnected] = useState(false); // Show only resources with relationships
 
   // Load filter state from localStorage on mount
   useEffect(() => {
@@ -501,6 +529,9 @@ function ArchitectureDiagramFlow() {
         if (filters.uncheckedTypes) setUncheckedTypes(new Set(filters.uncheckedTypes));
         if (filters.uncheckedRelTypes) setUncheckedRelTypes(new Set(filters.uncheckedRelTypes));
         if (filters.focusedAccount) setFocusedAccount(filters.focusedAccount);
+        if (filters.focusedRelationType) setFocusedRelationType(filters.focusedRelationType);
+        if (filters.focusedResourceType) setFocusedResourceType(filters.focusedResourceType);
+        if (filters.showOnlyConnected) setShowOnlyConnected(filters.showOnlyConnected);
         console.log('📂 Loaded saved filter state');
       }
     } catch (e) {
@@ -517,12 +548,15 @@ function ArchitectureDiagramFlow() {
         uncheckedTypes: Array.from(uncheckedTypes),
         uncheckedRelTypes: Array.from(uncheckedRelTypes),
         focusedAccount: focusedAccount,
+        focusedRelationType: focusedRelationType,
+        focusedResourceType: focusedResourceType,
+        showOnlyConnected: showOnlyConnected,
       };
       localStorage.setItem('diagram_filter_state', JSON.stringify(filterState));
     } catch (e) {
       console.warn('Failed to save filter state:', e);
     }
-  }, [uncheckedAccounts, uncheckedVPCs, uncheckedTypes, uncheckedRelTypes, focusedAccount]);
+  }, [uncheckedAccounts, uncheckedVPCs, uncheckedTypes, uncheckedRelTypes, focusedAccount, focusedRelationType, focusedResourceType, showOnlyConnected]);
 
   const getAccountKey = useCallback((r) => {
     if (r?.account_id) return r.account_id;
@@ -576,6 +610,16 @@ function ArchitectureDiagramFlow() {
     ];
   }, []);
   
+  // Get connected resource IDs (resources that have relationships)
+  const connectedResourceIds = useMemo(() => {
+    const ids = new Set();
+    relationships.forEach(rel => {
+      ids.add(rel.source_resource_id);
+      ids.add(rel.target_resource_id);
+    });
+    return ids;
+  }, [relationships]);
+
   // Filtered resources - show all except unchecked items
   const filteredResources = useMemo(() => {
     // Count resources by type
@@ -591,6 +635,10 @@ function ArchitectureDiagramFlow() {
     const filtered = resources.filter(r => {
       // Focus Account takes priority - if set, only show resources from that account
       if (focusedAccount && getAccountKey(r) !== focusedAccount) return false;
+      // Focus Resource Type - if set, only show resources of that type
+      if (focusedResourceType && r.type !== focusedResourceType) return false;
+      // Show only connected - if set, only show resources with relationships
+      if (showOnlyConnected && !connectedResourceIds.has(r.id)) return false;
       if (uncheckedAccounts.has(getAccountKey(r))) return false;
       // Only filter by VPC if resource HAS a VPC (don't filter global services like S3, CodePipeline, etc.)
       if (r.vpc_id && uncheckedVPCs.has(r.vpc_id)) return false;
@@ -603,9 +651,11 @@ function ArchitectureDiagramFlow() {
     console.log(`   - Resource types:`, typeCounts);
     console.log(`🔍 Filter results: ${filtered.length}/${resources.length} resources visible`);
     if (focusedAccount) console.log(`   - Focused on account: ${focusedAccount}`);
+    if (focusedResourceType) console.log(`   - Focused on type: ${focusedResourceType}`);
+    if (showOnlyConnected) console.log(`   - Showing only connected resources`);
     
     return filtered;
-  }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes, getAccountKey, focusedAccount]);
+  }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes, getAccountKey, focusedAccount, focusedResourceType, showOnlyConnected, connectedResourceIds]);
 
   // Get unique relationship types for filtering
   const relationshipTypes = useMemo(() => {
@@ -613,10 +663,15 @@ function ArchitectureDiagramFlow() {
     return Array.from(typeSet);
   }, [relationships]);
 
-  // Filtered relationships based on type filter
+  // Filtered relationships based on type filter and focused relationship type
   const filteredRelationships = useMemo(() => {
-    return relationships.filter(r => !uncheckedRelTypes.has(r.relationship_type));
-  }, [relationships, uncheckedRelTypes]);
+    return relationships.filter(r => {
+      // If focused on a specific relationship type, only show that type
+      if (focusedRelationType && r.relationship_type !== focusedRelationType) return false;
+      if (uncheckedRelTypes.has(r.relationship_type)) return false;
+      return true;
+    });
+  }, [relationships, uncheckedRelTypes, focusedRelationType]);
 
   useEffect(() => {
     // Load resources and relationships on mount
@@ -1716,10 +1771,13 @@ function ArchitectureDiagramFlow() {
         labelBgPadding: [6, 6],
         labelBgBorderRadius: 50,
         data: {
+          id: rel.id,
           relationshipId: rel.id,
           relationship_type: rel.relationship_type,
           direction: rel.direction,
           label: rel.label,
+          source_resource_id: rel.source_resource_id,
+          target_resource_id: rel.target_resource_id,
         },
       };
     });
@@ -1929,31 +1987,39 @@ function ArchitectureDiagramFlow() {
     return grouped;
   }, [filteredResources]);
 
-  // Create relationship from context menu
-  const createRelationshipFromMenu = useCallback(async (sourceId, targetId) => {
+  // Create relationship from context menu with type selection
+  const createRelationshipFromMenu = useCallback(async (sourceId, targetId, relType = 'connects_to') => {
     try {
       const token = localStorage.getItem('access_token');
+      const srcId = parseInt(sourceId);
+      const tgtId = parseInt(targetId);
+      
+      if (isNaN(srcId) || isNaN(tgtId)) {
+        console.error('Invalid IDs:', { sourceId, targetId, srcId, tgtId });
+        alert('Invalid resource IDs');
+        return;
+      }
+      
+      console.log('Creating relationship:', { srcId, tgtId, relType });
+      
       await axios.post(`${API_URL}/api/relationships`, {
-        source_resource_id: parseInt(sourceId),
-        target_resource_id: parseInt(targetId),
-        relationship_type: 'connects_to',
+        source_resource_id: srcId,
+        target_resource_id: tgtId,
+        relationship_type: relType,
         description: 'Created from diagram'
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
       // Refresh relationships
-      const response = await axios.get(`${API_URL}/api/relationships`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setRelationships(response.data || []);
+      fetchRelationships();
       
       alert('✅ Relationship created successfully!');
     } catch (error) {
       console.error('Failed to create relationship:', error);
       alert('Failed to create relationship: ' + (error.response?.data?.detail || error.message));
     }
-  }, []);
+  }, [fetchRelationships]);
   
   // Handle right-click context menu
   const handleNodeContextMenu = useCallback((event, node) => {
@@ -2178,6 +2244,9 @@ function ArchitectureDiagramFlow() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
+      {/* Navigation Bar */}
+      <NavBar />
+      
       {/* Header */}
       <div className="bg-white border-b px-4 py-2">
         <div className="flex items-center justify-between mb-3">
@@ -2405,6 +2474,51 @@ function ArchitectureDiagramFlow() {
                     <span className={`w-4 h-4 flex items-center justify-center ${showKeyboardShortcuts ? 'text-indigo-600' : 'text-gray-400'}`}>⌨️</span>
                     <span>{showKeyboardShortcuts ? '✓ ' : ''}Keyboard Shortcuts</span>
                   </button>
+                  <div className="border-t border-gray-100 my-1"></div>
+                  <div className="px-4 py-1 text-xs font-semibold text-gray-400 uppercase">Grid Options</div>
+                  <button
+                    onClick={() => {
+                      const newState = !showGrid;
+                      setShowGrid(newState);
+                      localStorage.setItem('diagram_show_grid', newState.toString());
+                      setShowViewMenu(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <span className={`w-4 h-4 flex items-center justify-center ${showGrid ? 'text-indigo-600' : 'text-gray-400'}`}>▦</span>
+                    <span>{showGrid ? '✓ ' : ''}Show Grid</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newState = !snapToGrid;
+                      setSnapToGrid(newState);
+                      localStorage.setItem('diagram_snap_to_grid', newState.toString());
+                      setShowViewMenu(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left text-sm transition-colors"
+                  >
+                    <span className={`w-4 h-4 flex items-center justify-center ${snapToGrid ? 'text-indigo-600' : 'text-gray-400'}`}>⊞</span>
+                    <span>{snapToGrid ? '✓ ' : ''}Snap to Grid</span>
+                  </button>
+                  <div className="px-4 py-2 flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Grid Size:</span>
+                    <select
+                      value={gridSize}
+                      onChange={(e) => {
+                        const size = parseInt(e.target.value);
+                        setGridSize(size);
+                        localStorage.setItem('diagram_grid_size', size.toString());
+                      }}
+                      className="text-xs px-2 py-1 border border-gray-200 rounded"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <option value="10">10px</option>
+                      <option value="20">20px</option>
+                      <option value="30">30px</option>
+                      <option value="40">40px</option>
+                      <option value="50">50px</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
@@ -2414,6 +2528,16 @@ function ArchitectureDiagramFlow() {
               <DollarSign className="w-4 h-4" />
               <span className="font-bold">{formatCost(estimatedCost)}/mo</span>
             </div>
+
+            {/* Relationship Manager Link */}
+            <button
+              onClick={() => navigate('/relationships')}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-purple-600 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
+              title="Manage Relationships"
+            >
+              <Network className="w-4 h-4" />
+              Relationships
+            </button>
 
             {/* Back Button */}
             <button
@@ -2630,25 +2754,144 @@ function ArchitectureDiagramFlow() {
               <option value="">All Accounts</option>
               {accounts.map(acc => (
                 <option key={acc} value={acc}>
-                  🎯 Focus: {customAccountNames[acc] || acc}
+                  🎯 {customAccountNames[acc] || acc.slice(-8)}
                 </option>
               ))}
             </select>
           </div>
 
-          {focusedAccount && (
+          {/* Focus Resource Type Dropdown */}
+          <div className="relative">
+            <select
+              value={focusedResourceType || ''}
+              onChange={(e) => setFocusedResourceType(e.target.value || null)}
+              className={`px-3 py-1.5 border rounded-lg text-sm font-medium ${
+                focusedResourceType 
+                  ? 'border-orange-500 bg-orange-50 text-orange-700' 
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <option value="">All Types</option>
+              {types.map(type => (
+                <option key={type} value={type}>
+                  📦 {type}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Focus Relationship Type Dropdown */}
+          <div className="relative">
+            <select
+              value={focusedRelationType || ''}
+              onChange={(e) => setFocusedRelationType(e.target.value || null)}
+              className={`px-3 py-1.5 border rounded-lg text-sm font-medium ${
+                focusedRelationType 
+                  ? 'border-cyan-500 bg-cyan-50 text-cyan-700' 
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <option value="">All Relations</option>
+              {relationshipTypes.map(type => (
+                <option key={type} value={type}>
+                  🔗 {type}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Show Only Connected Toggle */}
+          <label className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm font-medium cursor-pointer transition-colors ${
+            showOnlyConnected 
+              ? 'border-green-500 bg-green-50 text-green-700' 
+              : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+          }`}>
+            <input
+              type="checkbox"
+              checked={showOnlyConnected}
+              onChange={(e) => setShowOnlyConnected(e.target.checked)}
+              className="w-4 h-4 text-green-600 rounded"
+            />
+            <span>Connected Only</span>
+          </label>
+
+          {/* Clear All Focus Button */}
+          {(focusedAccount || focusedResourceType || focusedRelationType || showOnlyConnected) && (
             <button
-              onClick={() => setFocusedAccount(null)}
-              className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium hover:bg-purple-200"
+              onClick={() => {
+                setFocusedAccount(null);
+                setFocusedResourceType(null);
+                setFocusedRelationType(null);
+                setShowOnlyConnected(false);
+              }}
+              className="flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium hover:bg-red-200"
             >
               <X className="w-3 h-3" />
-              Clear Focus
+              Clear All Focus
             </button>
           )}
 
           <div className="text-sm text-gray-600">
             Showing {filteredResources.length} resources • {filteredRelationships.length} edges
           </div>
+
+          {/* Enhanced Mini Dashboard for Focused Account */}
+          {focusedAccount && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg flex-wrap">
+              {/* Total Resources */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-white rounded border border-purple-100">
+                <span className="text-xs text-purple-600">Total:</span>
+                <span className="text-sm font-bold text-purple-800">{filteredResources.length}</span>
+              </div>
+              {/* EC2 Count */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-orange-50 rounded border border-orange-200" title="EC2 Instances">
+                <span className="text-xs">🖥️</span>
+                <span className="text-xs font-bold text-orange-700">
+                  {filteredResources.filter(r => r.type?.toLowerCase() === 'ec2').length}
+                </span>
+              </div>
+              {/* RDS Count */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 rounded border border-blue-200" title="RDS Databases">
+                <span className="text-xs">🗄️</span>
+                <span className="text-xs font-bold text-blue-700">
+                  {filteredResources.filter(r => r.type?.toLowerCase() === 'rds').length}
+                </span>
+              </div>
+              {/* S3 Count */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-green-50 rounded border border-green-200" title="S3 Buckets">
+                <span className="text-xs">🪣</span>
+                <span className="text-xs font-bold text-green-700">
+                  {filteredResources.filter(r => r.type?.toLowerCase() === 's3').length}
+                </span>
+              </div>
+              {/* Lambda Count */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 rounded border border-amber-200" title="Lambda Functions">
+                <span className="text-xs">λ</span>
+                <span className="text-xs font-bold text-amber-700">
+                  {filteredResources.filter(r => r.type?.toLowerCase() === 'lambda').length}
+                </span>
+              </div>
+              {/* CodePipeline Count */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-cyan-50 rounded border border-cyan-200" title="CodePipelines">
+                <span className="text-xs">🔄</span>
+                <span className="text-xs font-bold text-cyan-700">
+                  {filteredResources.filter(r => r.type?.toLowerCase().includes('pipeline') || r.type?.toLowerCase().includes('codepipeline')).length}
+                </span>
+              </div>
+              {/* VPCs */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-violet-50 rounded border border-violet-200" title="VPCs">
+                <span className="text-xs">🌐</span>
+                <span className="text-xs font-bold text-violet-700">
+                  {new Set(filteredResources.filter(r => r.vpc_id).map(r => r.vpc_id)).size}
+                </span>
+              </div>
+              {/* Cost */}
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded border border-emerald-200" title="Estimated Monthly Cost">
+                <DollarSign className="w-3 h-3 text-emerald-600" />
+                <span className="text-xs font-bold text-emerald-700">{formatCost(calculateTotalCost(filteredResources))}/mo</span>
+              </div>
+            </div>
+          )}
 
           {/* Clear highlight button */}
           {highlightedNode && (
@@ -2780,18 +3023,287 @@ function ArchitectureDiagramFlow() {
           nodesConnectable={true}
           nodesDraggable={true}
           elementsSelectable={true}
+          snapToGrid={snapToGrid}
+          snapGrid={[gridSize, gridSize]}
         >
-          <Background 
-            color="#F3F4F6" 
-            gap={30} 
-            size={1}
-            variant="lines"
-            style={{ backgroundColor: '#FAFBFC' }}
-          />
+          {showGrid && (
+            <Background 
+              color="#E5E7EB" 
+              gap={gridSize} 
+              size={1}
+              variant={snapToGrid ? "dots" : "lines"}
+              style={{ backgroundColor: '#FAFBFC' }}
+            />
+          )}
+          {!showGrid && (
+            <Background 
+              color="transparent" 
+              style={{ backgroundColor: '#FAFBFC' }}
+            />
+          )}
           <Controls 
             showInteractive={false}
             className="bg-white shadow-lg rounded-lg border border-gray-200"
           />
+          
+          {/* Quick Actions Panel - Collapsible */}
+          <Panel position="top-right" className="m-2">
+            {/* Toggle Button */}
+            <button
+              onClick={() => {
+                const newState = !showQuickActions;
+                setShowQuickActions(newState);
+                localStorage.setItem('diagram_show_quick_actions', newState.toString());
+              }}
+              className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2 mb-1"
+              title={showQuickActions ? 'Hide Quick Actions' : 'Show Quick Actions'}
+            >
+              <span>⚡</span>
+              <span>{showQuickActions ? '▼' : '▶'} Quick Actions</span>
+            </button>
+            
+            {showQuickActions && (
+            <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 p-2 max-w-[200px]">
+            <div className="flex flex-col gap-1">
+              {/* Statistics */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-2 mb-1">
+                <div className="text-xs font-bold text-gray-600 mb-1">📊 Statistics</div>
+                <div className="grid grid-cols-2 gap-1 text-xs">
+                  <div className="flex items-center gap-1">
+                    <span className="text-blue-600 font-bold">{filteredResources.length}</span>
+                    <span className="text-gray-500">Resources</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-purple-600 font-bold">{filteredRelationships.length}</span>
+                    <span className="text-gray-500">Relations</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-green-600 font-bold">{accounts.length}</span>
+                    <span className="text-gray-500">Accounts</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-amber-600 font-bold">{vpcs.length}</span>
+                    <span className="text-gray-500">VPCs</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Quick Actions */}
+              <div className="text-xs font-bold text-gray-500 uppercase tracking-wide px-2 pb-1">Quick Actions</div>
+              <button
+                onClick={() => setShowRelationshipPopup(true)}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 rounded transition-colors text-left font-medium"
+                title="Create new relationship"
+              >
+                <span>➕</span>
+                <span>New Relationship</span>
+              </button>
+              <button
+                onClick={() => setShowResourcePalette(!showResourcePalette)}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs bg-green-50 hover:bg-green-100 text-green-700 rounded transition-colors text-left font-medium"
+                title="Add new resource"
+              >
+                <span>🆕</span>
+                <span>Add Resource</span>
+              </button>
+              <button
+                onClick={() => navigate('/relationships')}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs bg-purple-50 hover:bg-purple-100 text-purple-700 rounded transition-colors text-left font-medium"
+                title="Open Relationship Manager"
+              >
+                <span>🔗</span>
+                <span>Manage Relations</span>
+              </button>
+              <div className="border-t border-gray-100 my-1"></div>
+              <button
+                onClick={() => {
+                  const rf = document.querySelector('.react-flow');
+                  if (rf) {
+                    const event = new CustomEvent('fitView');
+                    rf.dispatchEvent(event);
+                  }
+                  // Use React Flow's fitView
+                  setNodes(nodes => {
+                    setTimeout(() => {
+                      const flowInstance = document.querySelector('.react-flow');
+                      if (flowInstance?.__reactFlow) {
+                        flowInstance.__reactFlow.fitView({ padding: 0.2 });
+                      }
+                    }, 100);
+                    return nodes;
+                  });
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Fit diagram to screen"
+              >
+                <span>📐</span>
+                <span>Fit to Screen</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Reset all node positions
+                  if (window.confirm('Reset all node positions to default layout?')) {
+                    localStorage.removeItem('diagram_node_positions');
+                    setSavedPositions({});
+                    setAutoPositioning(true);
+                    fetchResources();
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Reset layout to default"
+              >
+                <span>🔄</span>
+                <span>Reset Layout</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Select all resource nodes
+                  const resourceNodes = nodes.filter(n => n.type === 'resource');
+                  setNodes(nds => nds.map(n => ({
+                    ...n,
+                    selected: n.type === 'resource'
+                  })));
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Select all resources"
+              >
+                <span>☑️</span>
+                <span>Select All Resources</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Deselect all
+                  setNodes(nds => nds.map(n => ({ ...n, selected: false })));
+                  setEdges(eds => eds.map(e => ({ ...e, selected: false })));
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Deselect all"
+              >
+                <span>⬜</span>
+                <span>Deselect All</span>
+              </button>
+              <div className="border-t border-gray-100 my-1"></div>
+              <button
+                onClick={() => {
+                  // Toggle auto-positioning
+                  const newState = !autoPositioning;
+                  setAutoPositioning(newState);
+                  localStorage.setItem('diagram_auto_positioning', newState.toString());
+                }}
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left ${autoPositioning ? 'text-green-600' : 'text-gray-600'}`}
+                title="Toggle auto-positioning"
+              >
+                <span>{autoPositioning ? '✅' : '⬜'}</span>
+                <span>Auto Position</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Save current positions
+                  saveNodePositions(nodes);
+                  alert('✅ Node positions saved!');
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Save current positions"
+              >
+                <span>💾</span>
+                <span>Save Positions</span>
+              </button>
+              <div className="border-t border-gray-100 my-1"></div>
+              <div className="text-xs font-bold text-gray-500 uppercase tracking-wide px-2 pb-1">View Presets</div>
+              <button
+                onClick={() => {
+                  // Show all - clear all focus
+                  setFocusedAccount(null);
+                  setFocusedResourceType(null);
+                  setFocusedRelationType(null);
+                  setShowOnlyConnected(false);
+                  setUncheckedAccounts(new Set());
+                  setUncheckedVPCs(new Set());
+                  setUncheckedTypes(new Set());
+                  setUncheckedRelTypes(new Set());
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Show everything"
+              >
+                <span>🌐</span>
+                <span>Show All</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Compute only - show EC2, RDS, Lambda
+                  setFocusedAccount(null);
+                  setFocusedResourceType(null);
+                  setFocusedRelationType(null);
+                  setShowOnlyConnected(false);
+                  const computeTypes = new Set(types.filter(t => 
+                    !['ec2', 'rds', 'lambda', 'ecs', 'eks'].includes(t.toLowerCase())
+                  ));
+                  setUncheckedTypes(computeTypes);
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Show compute resources only"
+              >
+                <span>🖥️</span>
+                <span>Compute Only</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Storage only - show S3, EBS, EFS, RDS
+                  setFocusedAccount(null);
+                  setFocusedResourceType(null);
+                  setFocusedRelationType(null);
+                  setShowOnlyConnected(false);
+                  const storageTypes = new Set(types.filter(t => 
+                    !['s3', 'ebs', 'efs', 'rds', 'dynamodb', 'elasticache'].includes(t.toLowerCase())
+                  ));
+                  setUncheckedTypes(storageTypes);
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Show storage resources only"
+              >
+                <span>💾</span>
+                <span>Storage Only</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Network only - show VPC, ELB, Route53, CloudFront
+                  setFocusedAccount(null);
+                  setFocusedResourceType(null);
+                  setFocusedRelationType(null);
+                  setShowOnlyConnected(false);
+                  const networkTypes = new Set(types.filter(t => 
+                    !['vpc', 'elb', 'alb', 'nlb', 'route53', 'cloudfront', 'apigateway', 'nat'].includes(t.toLowerCase())
+                  ));
+                  setUncheckedTypes(networkTypes);
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Show network resources only"
+              >
+                <span>🌐</span>
+                <span>Network Only</span>
+              </button>
+              <button
+                onClick={() => {
+                  // Connected resources only
+                  setFocusedAccount(null);
+                  setFocusedResourceType(null);
+                  setFocusedRelationType(null);
+                  setShowOnlyConnected(true);
+                  setUncheckedAccounts(new Set());
+                  setUncheckedVPCs(new Set());
+                  setUncheckedTypes(new Set());
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-100 rounded transition-colors text-left"
+                title="Show only resources with relationships"
+              >
+                <span>🔗</span>
+                <span>Connected Only</span>
+              </button>
+            </div>
+            </div>
+            )}
+          </Panel>
+
           {showMinimap && (
             <MiniMap
               nodeColor={(node) => {
@@ -3661,16 +4173,21 @@ function ArchitectureDiagramFlow() {
         </div>
       )}
 
-      {/* Edge Edit Modal - Double-click on edge to edit/delete relationship */}
-      {showEdgeEditModal && selectedEdge && (
+      {/* Quick Relationship Creation Popup */}
+      {showRelationshipPopup && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900">Edit Relationship</h3>
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Network className="w-5 h-5 text-blue-600" />
+                Create Relationship
+              </h3>
               <button
                 onClick={() => {
-                  setShowEdgeEditModal(false);
-                  setSelectedEdge(null);
+                  setShowRelationshipPopup(false);
+                  setNewRelSource('');
+                  setNewRelTarget('');
+                  setNewRelType('uses');
                 }}
                 className="text-gray-400 hover:text-gray-600"
               >
@@ -3679,6 +4196,268 @@ function ArchitectureDiagramFlow() {
             </div>
 
             <div className="space-y-4">
+              {/* Source Resource */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-2 mb-1">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  Source Resource
+                </label>
+                <select
+                  value={newRelSource}
+                  onChange={(e) => setNewRelSource(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  <option value="">Select source...</option>
+                  {filteredResources.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name || r.resource_id} ({r.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Relationship Type */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Relationship Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(RELATIONSHIP_COLORS).map(([type, color]) => (
+                    <button
+                      key={type}
+                      onClick={() => setNewRelType(type)}
+                      className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                        newRelType === type
+                          ? 'ring-2 ring-offset-1 ring-blue-500'
+                          : 'hover:bg-gray-100'
+                      }`}
+                      style={{ 
+                        backgroundColor: newRelType === type ? color + '20' : 'transparent',
+                        borderColor: color,
+                        borderWidth: '2px',
+                        color: color
+                      }}
+                    >
+                      {type.replace('_', ' ')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Target Resource */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-2 mb-1">
+                  <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                  Target Resource
+                </label>
+                <select
+                  value={newRelTarget}
+                  onChange={(e) => setNewRelTarget(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  <option value="">Select target...</option>
+                  {filteredResources.filter(r => r.id.toString() !== newRelSource).map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name || r.resource_id} ({r.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Preview */}
+              {newRelSource && newRelTarget && (
+                <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                  <div className="text-gray-500 text-xs mb-1">Preview:</div>
+                  <div className="flex items-center gap-2 text-gray-700">
+                    <span className="font-medium truncate max-w-[120px]">
+                      {filteredResources.find(r => r.id.toString() === newRelSource)?.name || 'Source'}
+                    </span>
+                    <span style={{ color: RELATIONSHIP_COLORS[newRelType] }} className="font-bold">
+                      → {newRelType.replace('_', ' ')} →
+                    </span>
+                    <span className="font-medium truncate max-w-[120px]">
+                      {filteredResources.find(r => r.id.toString() === newRelTarget)?.name || 'Target'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={async () => {
+                  if (!newRelSource || !newRelTarget) {
+                    alert('Please select both source and target resources');
+                    return;
+                  }
+                  try {
+                    const token = localStorage.getItem('access_token');
+                    await axios.post(`${API_URL}/api/relationships`, {
+                      source_resource_id: parseInt(newRelSource),
+                      target_resource_id: parseInt(newRelTarget),
+                      relationship_type: newRelType,
+                      direction: 'outbound'
+                    }, {
+                      headers: { Authorization: `Bearer ${token}` }
+                    });
+                    await fetchRelationships();
+                    setShowRelationshipPopup(false);
+                    setNewRelSource('');
+                    setNewRelTarget('');
+                    setNewRelType('uses');
+                    alert('✅ Relationship created! Check the diagram.');
+                  } catch (error) {
+                    console.error('Failed to create relationship:', error);
+                    alert('Failed to create: ' + (error.response?.data?.detail || error.message));
+                  }
+                }}
+                disabled={!newRelSource || !newRelTarget}
+                className={`flex-1 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  newRelSource && newRelTarget
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                Create Relationship
+              </button>
+              <button
+                onClick={() => {
+                  setShowRelationshipPopup(false);
+                  setNewRelSource('');
+                  setNewRelTarget('');
+                  setNewRelType('uses');
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enhanced Edge Edit Modal - Full relationship editing */}
+      {showEdgeEditModal && selectedEdge && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Edit Relationship</h3>
+                <p className="text-xs text-gray-500 mt-1">Modify connection properties</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowEdgeEditModal(false);
+                  setSelectedEdge(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Source Resource */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  Source Resource
+                </label>
+                <select
+                  defaultValue={selectedEdge.data?.source_resource_id || selectedEdge.source}
+                  onChange={async (e) => {
+                    const newSourceId = parseInt(e.target.value);
+                    try {
+                      const token = localStorage.getItem('access_token');
+                      const relationshipId = selectedEdge.data?.id;
+                      if (relationshipId) {
+                        await axios.put(`${API_URL}/api/relationships/${relationshipId}`, {
+                          source_resource_id: newSourceId
+                        }, {
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        fetchRelationships();
+                      }
+                    } catch (error) {
+                      console.error('Failed to update source:', error);
+                      alert('Failed to update: ' + (error.response?.data?.detail || error.message));
+                    }
+                  }}
+                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  {resources.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name || r.resource_id} ({r.type}) - {r.account_id?.slice(-4) || 'N/A'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Swap Direction Button */}
+              <div className="flex justify-center">
+                <button
+                  onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('access_token');
+                      const relationshipId = selectedEdge.data?.id;
+                      if (relationshipId) {
+                        // Swap source and target
+                        await axios.put(`${API_URL}/api/relationships/${relationshipId}`, {
+                          source_resource_id: selectedEdge.data?.target_resource_id,
+                          target_resource_id: selectedEdge.data?.source_resource_id
+                        }, {
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        fetchRelationships();
+                        alert('✅ Direction reversed!');
+                      }
+                    } catch (error) {
+                      console.error('Failed to swap direction:', error);
+                      alert('Failed to swap: ' + (error.response?.data?.detail || error.message));
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition-colors"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Swap Direction
+                </button>
+              </div>
+
+              {/* Target Resource */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                  Target Resource
+                </label>
+                <select
+                  defaultValue={selectedEdge.data?.target_resource_id || selectedEdge.target}
+                  onChange={async (e) => {
+                    const newTargetId = parseInt(e.target.value);
+                    try {
+                      const token = localStorage.getItem('access_token');
+                      const relationshipId = selectedEdge.data?.id;
+                      if (relationshipId) {
+                        await axios.put(`${API_URL}/api/relationships/${relationshipId}`, {
+                          target_resource_id: newTargetId
+                        }, {
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        fetchRelationships();
+                      }
+                    } catch (error) {
+                      console.error('Failed to update target:', error);
+                      alert('Failed to update: ' + (error.response?.data?.detail || error.message));
+                    }
+                  }}
+                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  {resources.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name || r.resource_id} ({r.type}) - {r.account_id?.slice(-4) || 'N/A'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Relationship Type */}
               <div>
                 <label className="text-sm font-medium text-gray-700">Relationship Type</label>
                 <select
@@ -3694,9 +4473,7 @@ function ArchitectureDiagramFlow() {
                         }, {
                           headers: { Authorization: `Bearer ${token}` }
                         });
-                        // Refresh relationships
                         fetchRelationships();
-                        alert('✅ Relationship type updated!');
                       }
                     } catch (error) {
                       console.error('Failed to update relationship:', error);
@@ -3705,24 +4482,22 @@ function ArchitectureDiagramFlow() {
                   }}
                   className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  <option value="connects_to">connects_to</option>
-                  <option value="depends_on">depends_on</option>
-                  <option value="uses">uses</option>
-                  <option value="triggers">triggers</option>
-                  <option value="streams_to">streams_to</option>
-                  <option value="deploy_to">deploy_to</option>
-                  <option value="deployed_with">deployed_with</option>
-                  <option value="references">references</option>
+                  <option value="connects_to">connects_to (Network)</option>
+                  <option value="depends_on">depends_on (Dependency)</option>
+                  <option value="uses">uses (Usage)</option>
+                  <option value="triggers">triggers (Event)</option>
+                  <option value="streams_to">streams_to (Data Flow)</option>
+                  <option value="deploy_to">deploy_to (Deployment)</option>
+                  <option value="deployed_with">deployed_with (Co-deployment)</option>
+                  <option value="references">references (Reference)</option>
+                  <option value="reads_from">reads_from (Data Read)</option>
+                  <option value="writes_to">writes_to (Data Write)</option>
+                  <option value="invokes">invokes (Invocation)</option>
+                  <option value="authenticates">authenticates (Auth)</option>
                 </select>
               </div>
 
-              <div>
-                <label className="text-sm font-medium text-gray-700">Source → Target</label>
-                <p className="text-sm text-gray-900 mt-1 bg-gray-50 px-3 py-2 rounded font-mono">
-                  {selectedEdge.source} → {selectedEdge.target}
-                </p>
-              </div>
-
+              {/* Action Buttons */}
               <div className="pt-4 border-t flex gap-3">
                 <button
                   onClick={async () => {

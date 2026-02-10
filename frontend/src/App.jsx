@@ -7,6 +7,8 @@ import Resources from './pages/Resources';
 import AIInsights from './pages/AIInsights';
 import ArchitectureDiagram from './pages/ArchitectureDiagramFlow';
 import ResourcesNavigator from './pages/ResourcesNavigator';
+import RelationshipManager from './pages/RelationshipManager';
+import ManagementView from './pages/ManagementView';
 import Import from './pages/Import';
 import './i18n';
 
@@ -32,6 +34,8 @@ function App() {
         <Route path="/architecture" element={<ArchitectureDiagram />} />
         <Route path="/navigator" element={<ResourcesNavigator />} />
         <Route path="/ai-insights" element={<AIInsights />} />
+        <Route path="/relationships" element={<RelationshipManager />} />
+        <Route path="/management" element={<ManagementView />} />
         <Route path="/import" element={<Import />} />
       </Routes>
     </Router>

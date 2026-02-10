@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 import { AWSIcon, getServiceColor, AWS_SERVICE_COLORS } from '../components/AWSIcons';
+import NavBar from '../components/NavBar';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -622,6 +623,9 @@ function ResourcesNavigator() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-900 text-white">
+      {/* Navigation Bar */}
+      <NavBar />
+      
       {/* Header */}
       <header className="bg-slate-800 border-b border-slate-700 px-4 py-3 flex justify-between items-center">
         <div className="flex items-center gap-4">

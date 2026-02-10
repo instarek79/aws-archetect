@@ -5,6 +5,7 @@ import axios from '../utils/axiosConfig';
 import { Plus, Edit, Trash2, Globe, LogOut, Database, Sparkles, Network, CheckSquare, Square, Settings, Filter, Search, X, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, Copy, ExternalLink, MoreHorizontal, Download, RefreshCw, SlidersHorizontal, Cloud } from 'lucide-react';
 import ResourceModal from '../components/ResourceModal';
 import AWSConnectModal from '../components/AWSConnectModal';
+import NavBar from '../components/NavBar';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -866,6 +867,9 @@ function Resources() {
 
   return (
     <div className={`min-h-screen bg-gray-100 ${isRTL ? 'font-arabic' : ''}`} dir={isRTL ? 'rtl' : 'ltr'}>
+      {/* Navigation Bar */}
+      <NavBar />
+      
       {/* Compact Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="px-4 py-3">
