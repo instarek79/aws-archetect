@@ -4,7 +4,7 @@ import { X, Wand2, Plus, Trash2 } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 import TypeSpecificFields from './TypeSpecificFields';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
 
 function ResourceModal({ isOpen, onClose, onSave, resource, mode = 'add' }) {
   const { t, i18n } = useTranslation();

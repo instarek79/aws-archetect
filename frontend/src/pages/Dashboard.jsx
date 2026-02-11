@@ -5,7 +5,7 @@ import axios from '../utils/axiosConfig';
 import { LogOut, User, Globe, Database, Sparkles, Network, Server, HardDrive, MapPin, Activity, Upload, Shield, Cloud, Layers, BarChart3, TrendingUp, AlertTriangle, CheckCircle, Clock, Eye, DollarSign, Compass } from 'lucide-react';
 import NavBar from '../components/NavBar';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
 
 // Estimated monthly cost per resource type (in USD) - for visualization purposes
 const ESTIMATED_COSTS = {

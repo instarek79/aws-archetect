@@ -32,7 +32,7 @@ import NavBar from '../components/NavBar';
 import { calculateTotalCost, formatCost } from '../utils/costEstimation';
 import { generateCloudFormation, generateTerraform } from '../utils/iacExport';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
 
 // ELK instance for advanced layout
 const elk = new ELK();

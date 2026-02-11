@@ -7,7 +7,7 @@ import ResourceModal from '../components/ResourceModal';
 import AWSConnectModal from '../components/AWSConnectModal';
 import NavBar from '../components/NavBar';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
 
 // Linked/metadata resource types (not counted as main resources)
 const LINKED_RESOURCE_TYPES = new Set([

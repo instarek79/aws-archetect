@@ -22,7 +22,7 @@ import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
 import GIF from 'gif.js';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
 
 // AWS Service Colors
 const getServiceColor = (type) => {

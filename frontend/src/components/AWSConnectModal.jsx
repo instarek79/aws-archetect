@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, Cloud, CheckCircle, AlertCircle, Loader, Database } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
 
 const AWSConnectModal = ({ isOpen, onClose, onScanComplete }) => {
   const [step, setStep] = useState('credentials'); // credentials, testing, scanning, confirm, importing, complete
