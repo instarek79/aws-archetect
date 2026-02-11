@@ -8,7 +8,7 @@ import {
 import axios from '../utils/axiosConfig';
 import NavBar from '../components/NavBar';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
 
 // Relationship type colors
 const RELATIONSHIP_COLORS = {

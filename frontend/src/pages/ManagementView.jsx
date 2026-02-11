@@ -11,7 +11,7 @@ import axios from '../utils/axiosConfig';
 import NavBar from '../components/NavBar';
 import { AWSIcon, getServiceColor } from '../components/AWSIcons';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
 
 // AWS Service Colors (official AWS colors)
 const AWS_COLORS = {

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 #  AWS Architect - Start Backend Only (Linux)
-#  Backend: http://localhost:8800
+#  Backend: http://localhost:8805
 # ============================================================================
 
 set -e
@@ -9,7 +9,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/backend"
 
-echo "Starting Backend Server on port 8800..."
+echo "Starting Backend Server on port 8805..."
 
 # Create virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
@@ -37,9 +37,9 @@ export OLLAMA_MODEL="qwen2.5"
 mkdir -p data
 
 echo ""
-echo "Backend: http://localhost:8800"
-echo "API Docs: http://localhost:8800/docs"
+echo "Backend: http://localhost:8805"
+echo "API Docs: http://localhost:8805/docs"
 echo ""
 
 # Start backend
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8800 --reload
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8805 --reload

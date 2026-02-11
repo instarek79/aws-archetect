@@ -11,7 +11,7 @@ import axios from '../utils/axiosConfig';
 import { AWSIcon, getServiceColor, AWS_SERVICE_COLORS } from '../components/AWSIcons';
 import NavBar from '../components/NavBar';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
 
 // Linked/metadata resources - filtered out
 const LINKED_RESOURCE_TYPES = new Set([

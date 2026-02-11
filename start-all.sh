@@ -2,7 +2,7 @@
 # ============================================================================
 #  AWS Architect - Start All Services (Linux)
 #  Frontend: http://localhost:3030
-#  Backend:  http://localhost:8800
+#  Backend:  http://localhost:8805
 # ============================================================================
 
 set -e
@@ -81,8 +81,8 @@ db.close()
 " 2>/dev/null || echo -e "${YELLOW}  Will create admin on first run${NC}"
 
 # Start backend in background
-echo -e "${GREEN}  Starting FastAPI on port 8800...${NC}"
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8800 &
+echo -e "${GREEN}  Starting FastAPI on port 8805...${NC}"
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8805 &
 BACKEND_PID=$!
 echo -e "${GREEN}  Backend PID: $BACKEND_PID${NC}"
 
@@ -123,8 +123,8 @@ echo -e "${GREEN}===============================================================
 echo ""
 echo -e "${CYAN}Services:${NC}"
 echo -e "  Frontend:  ${GREEN}http://localhost:3030${NC}"
-echo -e "  Backend:   ${GREEN}http://localhost:8800${NC}"
-echo -e "  API Docs:  ${GREEN}http://localhost:8800/docs${NC}"
+echo -e "  Backend:   ${GREEN}http://localhost:8805${NC}"
+echo -e "  API Docs:  ${GREEN}http://localhost:8805/docs${NC}"
 echo ""
 echo -e "${CYAN}Login:${NC}"
 echo -e "  Email:     admin@example.com"

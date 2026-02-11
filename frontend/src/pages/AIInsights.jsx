@@ -5,7 +5,7 @@ import axios from '../utils/axiosConfig';
 import { Sparkles, Send, Download, Globe, LogOut, Loader, Database, FileText } from 'lucide-react';
 import jsPDF from 'jspdf';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8800';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
 
 function AIInsights() {
   const { t, i18n } = useTranslation();
