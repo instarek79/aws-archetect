@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def scan_route53_hosted_zones(session: boto3.Session, region: str, account_id: str) -> List[Dict[str, Any]]:
-    """Scan Route53 Hosted Zones"""
+    """Scan Route53 Hosted Zones and their individual DNS records"""
     route53 = session.client('route53')
     resources = []
     
@@ -19,10 +19,11 @@ def scan_route53_hosted_zones(session: boto3.Session, region: str, account_id: s
         for zone in hosted_zones:
             zone_id = zone['Id'].split('/')[-1]
             
-            # Get zone details
             try:
                 zone_details = route53.get_hosted_zone(Id=zone_id)
                 zone_info = zone_details['HostedZone']
+                zone_name = zone_info['Name'].rstrip('.')
+                is_private = zone_info.get('Config', {}).get('PrivateZone', False)
                 
                 # Get tags
                 try:
@@ -34,34 +35,99 @@ def scan_route53_hosted_zones(session: boto3.Session, region: str, account_id: s
                 except:
                     tags = {}
                 
-                # Get record count
+                # Fetch ALL DNS records for this zone (paginated)
+                all_records = []
                 try:
-                    record_sets = route53.list_resource_record_sets(HostedZoneId=zone_id)
-                    record_count = len(record_sets.get('ResourceRecordSets', []))
+                    paginator = route53.get_paginator('list_resource_record_sets')
+                    for page in paginator.paginate(HostedZoneId=zone_id):
+                        all_records.extend(page.get('ResourceRecordSets', []))
                 except:
-                    record_count = 0
+                    try:
+                        resp = route53.list_resource_record_sets(HostedZoneId=zone_id)
+                        all_records = resp.get('ResourceRecordSets', [])
+                    except:
+                        all_records = []
                 
+                # Save the hosted zone itself
                 resource = {
-                    'name': zone_info['Name'].rstrip('.'),
+                    'name': zone_name,
                     'resource_id': zone_id,
                     'type': 'route53',
-                    'status': 'active' if not zone_info.get('Config', {}).get('PrivateZone', False) else 'private',
-                    'region': 'global',  # Route53 is global
+                    'status': 'active' if not is_private else 'private',
+                    'region': 'global',
                     'account_id': account_id,
                     'tags': tags,
                     'type_specific_properties': {
                         'zone_id': zone_id,
-                        'private_zone': zone_info.get('Config', {}).get('PrivateZone', False),
-                        'record_count': record_count,
+                        'private_zone': is_private,
+                        'record_count': len(all_records),
                         'caller_reference': zone_info.get('CallerReference'),
                         'comment': zone_info.get('Config', {}).get('Comment', '')
                     }
                 }
                 resources.append(resource)
+                
+                # Save each DNS record as a separate route53_record resource
+                for record in all_records:
+                    rec_name = record.get('Name', '').rstrip('.')
+                    rec_type = record.get('Type', '')
+                    
+                    # Skip NS and SOA records for the zone apex (infrastructure records)
+                    if rec_type in ('NS', 'SOA') and rec_name == zone_name:
+                        continue
+                    
+                    # Skip TXT, MX, SRV, CAA records (not URL-related)
+                    if rec_type in ('TXT', 'MX', 'SRV', 'CAA', 'NS', 'SOA', 'SPF', 'NAPTR'):
+                        continue
+                    
+                    # Get record values
+                    record_values = []
+                    alias_target = None
+                    
+                    if 'AliasTarget' in record:
+                        alias_target = record['AliasTarget']
+                        record_values = [alias_target.get('DNSName', '').rstrip('.')]
+                    elif 'ResourceRecords' in record:
+                        record_values = [rr.get('Value', '') for rr in record['ResourceRecords']]
+                    
+                    if not record_values:
+                        continue
+                    
+                    rec_resource = {
+                        'name': rec_name,
+                        'resource_id': f"{zone_id}:{rec_name}:{rec_type}",
+                        'type': 'route53_record',
+                        'status': 'active',
+                        'region': 'global',
+                        'account_id': account_id,
+                        'dns_name': rec_name,
+                        'tags': {},
+                        'type_specific_properties': {
+                            'zone_id': zone_id,
+                            'zone_name': zone_name,
+                            'record_type': rec_type,
+                            'record_values': record_values,
+                            'alias_target': {
+                                'dns_name': alias_target.get('DNSName', '').rstrip('.'),
+                                'hosted_zone_id': alias_target.get('HostedZoneId', ''),
+                                'evaluate_target_health': alias_target.get('EvaluateTargetHealth', False),
+                            } if alias_target else None,
+                            'ttl': record.get('TTL'),
+                            'set_identifier': record.get('SetIdentifier'),
+                            'weight': record.get('Weight'),
+                            'failover': record.get('Failover'),
+                        }
+                    }
+                    resources.append(rec_resource)
+                
+                logger.info(f"Zone {zone_name}: {len(all_records)} records scanned")
+                
             except Exception as e:
                 logger.error(f"Error getting details for hosted zone {zone_id}: {e}")
                 
-        logger.info(f"Found {len(resources)} Route53 hosted zones")
+        zones_count = sum(1 for r in resources if r['type'] == 'route53')
+        records_count = sum(1 for r in resources if r['type'] == 'route53_record')
+        logger.info(f"Found {zones_count} Route53 hosted zones with {records_count} DNS records")
     except Exception as e:
         logger.error(f"Error scanning Route53: {e}")
         

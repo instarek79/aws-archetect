@@ -31,6 +31,8 @@ LINKED_RESOURCE_TYPES = {
     'ipam_discovery',            # IPAM metadata
     'ipam_discovery_assoc',      # IPAM metadata
     'network_insights',          # Analysis tools
+    'route53',                   # Hosted zones - shown in Navigator
+    'route53_record',            # DNS records - shown in Navigator
 }
 
 
@@ -202,66 +204,22 @@ def get_url_flows(
     db: Session = Depends(get_db)
 ):
     """
-    Build URL flow chains: Route53 URLs → ALB → EC2 instances
-    with connected CloudFront, S3, Pipelines for each URL.
-    Returns a list of URL entries with their full resource chain.
+    Build URL flow chains from individual route53_record resources.
+    Each DNS record (A, CNAME, ALIAS) is matched to ALB/CloudFront/EC2
+    across ALL accounts by comparing record values to resource dns_name fields.
+    Also includes manually linked resources via relationships.
     """
     import json
     
-    # Get all Route53 zones (management account ending 318)
-    route53_zones = db.query(Resource).filter(Resource.type == 'route53').all()
-    
-    # Get all resources by type for matching
-    all_resources = db.query(Resource).all()
-    
-    # Index resources by type
-    resources_by_type = {}
-    resources_by_id = {}
-    resources_by_vpc = {}
-    resources_by_account = {}
-    
-    for r in all_resources:
-        resources_by_id[r.id] = r
-        if r.type not in resources_by_type:
-            resources_by_type[r.type] = []
-        resources_by_type[r.type].append(r)
-        if r.vpc_id:
-            if r.vpc_id not in resources_by_vpc:
-                resources_by_vpc[r.vpc_id] = []
-            resources_by_vpc[r.vpc_id].append(r)
-        if r.account_id:
-            if r.account_id not in resources_by_account:
-                resources_by_account[r.account_id] = []
-            resources_by_account[r.account_id].append(r)
-    
-    # Get all relationships
-    from app.models import ResourceRelationship
-    relationships = db.query(ResourceRelationship).all()
-    
-    # Build relationship maps
-    outgoing_map = {}  # source_id -> [target_ids]
-    incoming_map = {}  # target_id -> [source_ids]
-    rel_details = {}   # (source_id, target_id) -> relationship
-    
-    for rel in relationships:
-        if rel.source_resource_id not in outgoing_map:
-            outgoing_map[rel.source_resource_id] = []
-        outgoing_map[rel.source_resource_id].append(rel.target_resource_id)
-        
-        if rel.target_resource_id not in incoming_map:
-            incoming_map[rel.target_resource_id] = []
-        incoming_map[rel.target_resource_id].append(rel.source_resource_id)
-        
-        rel_details[(rel.source_resource_id, rel.target_resource_id)] = rel
+    def get_props(r):
+        if not r.type_specific_properties:
+            return {}
+        try:
+            return json.loads(r.type_specific_properties) if isinstance(r.type_specific_properties, str) else r.type_specific_properties
+        except:
+            return {}
     
     def resource_to_dict(r):
-        """Convert resource to a summary dict"""
-        props = {}
-        if r.type_specific_properties:
-            try:
-                props = json.loads(r.type_specific_properties) if isinstance(r.type_specific_properties, str) else r.type_specific_properties
-            except:
-                props = {}
         return {
             "id": r.id,
             "name": r.name,
@@ -277,145 +235,291 @@ def get_url_flows(
             "dns_name": r.dns_name,
             "instance_type": r.instance_type,
             "environment": r.environment,
-            "type_specific_properties": props,
+            "type_specific_properties": get_props(r),
             "tags": r.tags if r.tags else {},
         }
     
-    def find_connected_by_type(resource_id, target_types):
-        """Find connected resources of specific types via relationships"""
-        connected = []
+    # Get all route53_record resources (individual DNS records)
+    dns_records = db.query(Resource).filter(Resource.type == 'route53_record').all()
+    
+    # Get ALL resources across all accounts for matching
+    all_resources = db.query(Resource).filter(Resource.type != 'route53_record', Resource.type != 'route53').all()
+    
+    # Build lookup indexes for matching DNS record values to resources
+    # Index by dns_name (lowercase) for ALBs, CloudFront, etc.
+    dns_name_index = {}  # dns_name -> resource
+    public_ip_index = {}  # public_ip -> resource
+    resources_by_id = {}
+    resources_by_vpc = {}  # vpc_id -> [resources]
+    
+    for r in all_resources:
+        resources_by_id[r.id] = r
+        # Index by dns_name
+        if r.dns_name:
+            dns_name_index[r.dns_name.lower().rstrip('.')] = r
+        # Index by type_specific_properties dns_name
+        props = get_props(r)
+        if props.get('dns_name'):
+            dns_name_index[props['dns_name'].lower().rstrip('.')] = r
+        if props.get('domain_name'):
+            dns_name_index[props['domain_name'].lower().rstrip('.')] = r
+        # Index by public IP
+        if r.public_ip:
+            public_ip_index[r.public_ip] = r
+        if props.get('public_ip'):
+            public_ip_index[props['public_ip']] = r
+        # Index by VPC
+        if r.vpc_id:
+            resources_by_vpc.setdefault(r.vpc_id, []).append(r)
+    
+    # Get all relationships for manual links
+    from app.models import ResourceRelationship
+    relationships = db.query(ResourceRelationship).all()
+    outgoing_map = {}
+    incoming_map = {}
+    for rel in relationships:
+        outgoing_map.setdefault(rel.source_resource_id, []).append(rel.target_resource_id)
+        incoming_map.setdefault(rel.target_resource_id, []).append(rel.source_resource_id)
+    
+    def find_linked_resources(resource_id):
+        """Find all resources linked via relationships"""
+        linked = []
         seen = set()
-        
-        # Check outgoing
         for tid in outgoing_map.get(resource_id, []):
             r = resources_by_id.get(tid)
-            if r and r.type in target_types and r.id not in seen:
-                connected.append(r)
+            if r and r.id not in seen:
+                linked.append(r)
                 seen.add(r.id)
-        
-        # Check incoming
         for sid in incoming_map.get(resource_id, []):
             r = resources_by_id.get(sid)
-            if r and r.type in target_types and r.id not in seen:
-                connected.append(r)
+            if r and r.id not in seen:
+                linked.append(r)
                 seen.add(r.id)
+        return linked
+    
+    def match_record_to_resources(record):
+        """Match a DNS record's values to actual resources across all accounts"""
+        props = get_props(record)
+        record_values = props.get('record_values', [])
+        alias_target = props.get('alias_target')
         
-        return connected
+        matched = []
+        seen_ids = set()
+        
+        # Check alias target first (most reliable)
+        if alias_target and alias_target.get('dns_name'):
+            alias_dns = alias_target['dns_name'].lower().rstrip('.')
+            # Direct match
+            if alias_dns in dns_name_index:
+                r = dns_name_index[alias_dns]
+                if r.id not in seen_ids:
+                    matched.append(r)
+                    seen_ids.add(r.id)
+            else:
+                # Partial match - ALB dns names can be long
+                for key, r in dns_name_index.items():
+                    if alias_dns in key or key in alias_dns:
+                        if r.id not in seen_ids:
+                            matched.append(r)
+                            seen_ids.add(r.id)
+        
+        # Check record values (IPs, CNAMEs)
+        for val in record_values:
+            val_clean = val.lower().rstrip('.')
+            # Direct DNS name match
+            if val_clean in dns_name_index:
+                r = dns_name_index[val_clean]
+                if r.id not in seen_ids:
+                    matched.append(r)
+                    seen_ids.add(r.id)
+            # IP match
+            elif val in public_ip_index:
+                r = public_ip_index[val]
+                if r.id not in seen_ids:
+                    matched.append(r)
+                    seen_ids.add(r.id)
+            else:
+                # Partial DNS match
+                for key, r in dns_name_index.items():
+                    if val_clean in key or key in val_clean:
+                        if r.id not in seen_ids:
+                            matched.append(r)
+                            seen_ids.add(r.id)
+        
+        # Also include manually linked resources
+        for r in find_linked_resources(record.id):
+            if r.id not in seen_ids:
+                matched.append(r)
+                seen_ids.add(r.id)
+        
+        return matched
     
-    def find_by_vpc_and_type(vpc_id, target_types, exclude_ids=None):
-        """Find resources in same VPC of specific types"""
-        if not vpc_id:
-            return []
-        exclude = exclude_ids or set()
-        results = []
-        for r in resources_by_vpc.get(vpc_id, []):
-            if r.type in target_types and r.id not in exclude:
-                results.append(r)
-        return results
-    
-    def find_by_account_and_type(account_id, target_types, exclude_ids=None):
-        """Find resources in same account of specific types"""
-        if not account_id:
-            return []
-        exclude = exclude_ids or set()
-        results = []
-        for r in resources_by_account.get(account_id, []):
-            if r.type in target_types and r.id not in exclude:
-                results.append(r)
-        return results
+    def find_downstream(resource, seen_ids):
+        """Given a matched resource (ALB), find its downstream EC2, RDS, etc."""
+        downstream = []
+        # Via relationships
+        for r in find_linked_resources(resource.id):
+            if r.id not in seen_ids:
+                downstream.append(r)
+                seen_ids.add(r.id)
+        # Via same VPC for ALBs
+        if resource.vpc_id and resource.type in ('elb', 'alb', 'nlb', 'elasticloadbalancing'):
+            for r in resources_by_vpc.get(resource.vpc_id, []):
+                if r.id not in seen_ids and r.type in ('ec2', 'instance', 'rds', 'aurora', 'dynamodb', 'elasticache', 'ecs', 'eks'):
+                    downstream.append(r)
+                    seen_ids.add(r.id)
+        return downstream
     
     url_flows = []
     
-    for zone in route53_zones:
-        zone_props = {}
-        if zone.type_specific_properties:
-            try:
-                zone_props = json.loads(zone.type_specific_properties) if isinstance(zone.type_specific_properties, str) else zone.type_specific_properties
-            except:
-                zone_props = {}
+    for record in dns_records:
+        props = get_props(record)
+        record_type = props.get('record_type', '')
+        record_values = props.get('record_values', [])
+        zone_name = props.get('zone_name', '')
         
-        zone_name = zone.name or ''
-        zone_account = zone.account_id or ''
+        # Auto-match record values to resources
+        direct_matches = match_record_to_resources(record)
         
-        # Find ALBs/ELBs connected to this Route53 zone
-        alb_types = {'elb', 'alb', 'nlb', 'elasticloadbalancing'}
-        connected_albs = find_connected_by_type(zone.id, alb_types)
+        # Categorize matched resources
+        albs = []
+        cloudfront_list = []
+        ec2_list = []
+        db_list = []
+        s3_list = []
+        pipeline_list = []
+        other_list = []
+        seen_ids = {record.id}
         
-        # Also find ALBs in same account whose DNS might match
-        if not connected_albs:
-            account_albs = find_by_account_and_type(zone_account, alb_types)
-            connected_albs = account_albs
+        for r in direct_matches:
+            seen_ids.add(r.id)
+            if r.type in ('elb', 'alb', 'nlb', 'elasticloadbalancing'):
+                albs.append(r)
+            elif r.type == 'cloudfront':
+                cloudfront_list.append(r)
+            elif r.type in ('ec2', 'instance'):
+                ec2_list.append(r)
+            elif r.type in ('rds', 'aurora', 'dynamodb', 'elasticache'):
+                db_list.append(r)
+            elif r.type == 's3':
+                s3_list.append(r)
+            elif r.type in ('codepipeline', 'codebuild', 'codecommit', 'codedeploy'):
+                pipeline_list.append(r)
+            else:
+                other_list.append(r)
         
-        # For each ALB, find connected EC2 instances
-        for alb in connected_albs:
-            ec2_types = {'ec2', 'instance'}
-            connected_ec2s = find_connected_by_type(alb.id, ec2_types)
-            
-            # Also find EC2s in same VPC
-            if not connected_ec2s and alb.vpc_id:
-                connected_ec2s = find_by_vpc_and_type(alb.vpc_id, ec2_types)
-            
-            # Find CloudFront distributions connected to this zone or ALB
-            cf_types = {'cloudfront'}
-            connected_cf = find_connected_by_type(zone.id, cf_types)
-            if not connected_cf:
-                connected_cf = find_connected_by_type(alb.id, cf_types)
-            if not connected_cf:
-                connected_cf = find_by_account_and_type(zone_account, cf_types)
-            
-            # Find S3 buckets in same account
-            s3_types = {'s3'}
-            connected_s3 = find_by_account_and_type(zone_account, s3_types)
-            
-            # Find Pipelines in same account
-            pipeline_types = {'codepipeline', 'codebuild', 'codecommit', 'codedeploy'}
-            connected_pipelines = find_by_account_and_type(zone_account, pipeline_types)
-            
-            # Find RDS in same VPC as ALB
-            rds_types = {'rds', 'aurora', 'dynamodb'}
-            connected_rds = find_connected_by_type(alb.id, rds_types)
-            if not connected_rds and alb.vpc_id:
-                connected_rds = find_by_vpc_and_type(alb.vpc_id, rds_types)
-            
-            url_flows.append({
-                "url": zone_name,
-                "zone": resource_to_dict(zone),
-                "alb": resource_to_dict(alb),
-                "ec2_instances": [resource_to_dict(e) for e in connected_ec2s[:10]],
-                "cloudfront": [resource_to_dict(cf) for cf in connected_cf[:5]],
-                "s3_buckets": [resource_to_dict(s) for s in connected_s3[:10]],
-                "pipelines": [resource_to_dict(p) for p in connected_pipelines[:10]],
-                "databases": [resource_to_dict(d) for d in connected_rds[:5]],
-                "account_id": zone_account,
-            })
+        # For each ALB, find downstream resources (EC2, RDS, etc.)
+        for alb in albs:
+            downstream = find_downstream(alb, seen_ids)
+            for r in downstream:
+                if r.type in ('ec2', 'instance'):
+                    ec2_list.append(r)
+                elif r.type in ('rds', 'aurora', 'dynamodb', 'elasticache'):
+                    db_list.append(r)
+                elif r.type == 's3':
+                    s3_list.append(r)
+                elif r.type in ('codepipeline', 'codebuild', 'codecommit', 'codedeploy'):
+                    pipeline_list.append(r)
+                else:
+                    other_list.append(r)
         
-        # If no ALBs found, still create an entry for the zone
-        if not connected_albs:
-            # Find any resources in same account
-            cf_types = {'cloudfront'}
-            connected_cf = find_by_account_and_type(zone_account, cf_types)
-            s3_types = {'s3'}
-            connected_s3 = find_by_account_and_type(zone_account, s3_types)
-            pipeline_types = {'codepipeline', 'codebuild', 'codecommit', 'codedeploy'}
-            connected_pipelines = find_by_account_and_type(zone_account, pipeline_types)
-            ec2_types = {'ec2', 'instance'}
-            connected_ec2s = find_by_account_and_type(zone_account, ec2_types)
-            rds_types = {'rds', 'aurora', 'dynamodb'}
-            connected_rds = find_by_account_and_type(zone_account, rds_types)
-            
-            url_flows.append({
-                "url": zone_name,
-                "zone": resource_to_dict(zone),
-                "alb": None,
-                "ec2_instances": [resource_to_dict(e) for e in connected_ec2s[:10]],
-                "cloudfront": [resource_to_dict(cf) for cf in connected_cf[:5]],
-                "s3_buckets": [resource_to_dict(s) for s in connected_s3[:10]],
-                "pipelines": [resource_to_dict(p) for p in connected_pipelines[:10]],
-                "databases": [resource_to_dict(d) for d in connected_rds[:5]],
-                "account_id": zone_account,
-            })
+        # For each EC2, find downstream databases
+        for ec2 in list(ec2_list):
+            downstream = find_downstream(ec2, seen_ids)
+            for r in downstream:
+                if r.type in ('rds', 'aurora', 'dynamodb', 'elasticache'):
+                    db_list.append(r)
+                elif r.type == 's3':
+                    s3_list.append(r)
+        
+        url_flows.append({
+            "url": record.name,
+            "record_id": record.id,
+            "record_type": record_type,
+            "record_values": record_values,
+            "zone_name": zone_name,
+            "account_id": record.account_id,
+            "record": resource_to_dict(record),
+            "albs": [resource_to_dict(r) for r in albs],
+            "cloudfront": [resource_to_dict(r) for r in cloudfront_list],
+            "ec2_instances": [resource_to_dict(r) for r in ec2_list],
+            "databases": [resource_to_dict(r) for r in db_list],
+            "s3_buckets": [resource_to_dict(r) for r in s3_list],
+            "pipelines": [resource_to_dict(r) for r in pipeline_list],
+            "other": [resource_to_dict(r) for r in other_list],
+            "has_connections": len(direct_matches) > 0,
+        })
+    
+    # Sort: connected first, then alphabetically
+    url_flows.sort(key=lambda f: (not f['has_connections'], f['url']))
     
     return url_flows
+
+
+class URLLinkRequest(BaseModel):
+    record_id: int
+    target_resource_id: int
+    label: str = "manual_dns_link"
+
+
+@router.post("/url-link")
+def link_url_to_resource(
+    request: URLLinkRequest,
+    db: Session = Depends(get_db)
+):
+    """Manually link a Route53 DNS record to any resource"""
+    from app.models import ResourceRelationship
+    
+    record = db.query(Resource).filter(Resource.id == request.record_id).first()
+    target = db.query(Resource).filter(Resource.id == request.target_resource_id).first()
+    
+    if not record:
+        raise HTTPException(status_code=404, detail="DNS record not found")
+    if not target:
+        raise HTTPException(status_code=404, detail="Target resource not found")
+    
+    # Check if link already exists
+    existing = db.query(ResourceRelationship).filter(
+        ResourceRelationship.source_resource_id == request.record_id,
+        ResourceRelationship.target_resource_id == request.target_resource_id
+    ).first()
+    
+    if existing:
+        return {"message": "Link already exists", "relationship_id": existing.id}
+    
+    rel = ResourceRelationship(
+        source_resource_id=request.record_id,
+        target_resource_id=request.target_resource_id,
+        relationship_type="routes_to",
+        label=request.label,
+        description=f"DNS record {record.name} routes to {target.name}",
+        direction="unidirectional",
+        auto_detected="no",
+        confidence="high",
+        status="active",
+    )
+    db.add(rel)
+    db.commit()
+    db.refresh(rel)
+    
+    return {"message": "Link created", "relationship_id": rel.id}
+
+
+@router.delete("/url-link/{relationship_id}")
+def unlink_url_from_resource(
+    relationship_id: int,
+    db: Session = Depends(get_db)
+):
+    """Remove a manual link between a DNS record and a resource"""
+    from app.models import ResourceRelationship
+    
+    rel = db.query(ResourceRelationship).filter(ResourceRelationship.id == relationship_id).first()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    
+    db.delete(rel)
+    db.commit()
+    return {"message": "Link removed"}
 
 
 @router.get("/{resource_id}", response_model=ResourceResponse)

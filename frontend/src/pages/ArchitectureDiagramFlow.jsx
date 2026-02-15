@@ -644,7 +644,7 @@ function ArchitectureDiagramFlow() {
       if (r.vpc_id && uncheckedVPCs.has(r.vpc_id)) return false;
       if (uncheckedTypes.has(r.type)) return false;
       // Route53 records are shown in Navigator, not here
-      if (r.type === 'route53') return false;
+      if (r.type === 'route53' || r.type === 'route53_record') return false;
       return true;
     });
     
