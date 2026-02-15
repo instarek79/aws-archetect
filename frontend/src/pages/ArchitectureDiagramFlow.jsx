@@ -601,7 +601,7 @@ function ArchitectureDiagramFlow() {
       'elb', 'alb', 'nlb', 'vpc', 'subnet', 'internet-gateway', 'nat-gateway',
       'ecs', 'eks', 'ecr', 'fargate',
       'sns', 'sqs', 'apigateway', 'eventbridge', 'stepfunctions',
-      'cloudfront', 'route53', 'waf',
+      'cloudfront', 'waf',
       'cognito', 'iam', 'kms', 'secretsmanager',
       'cloudwatch', 'cloudtrail', 'cloudformation',
       'codepipeline', 'codebuild', 'codecommit', 'codedeploy',
@@ -643,6 +643,8 @@ function ArchitectureDiagramFlow() {
       // Only filter by VPC if resource HAS a VPC (don't filter global services like S3, CodePipeline, etc.)
       if (r.vpc_id && uncheckedVPCs.has(r.vpc_id)) return false;
       if (uncheckedTypes.has(r.type)) return false;
+      // Route53 records are shown in Navigator, not here
+      if (r.type === 'route53') return false;
       return true;
     });
     
@@ -3272,7 +3274,7 @@ function ArchitectureDiagramFlow() {
                   setFocusedRelationType(null);
                   setShowOnlyConnected(false);
                   const networkTypes = new Set(types.filter(t => 
-                    !['vpc', 'elb', 'alb', 'nlb', 'route53', 'cloudfront', 'apigateway', 'nat'].includes(t.toLowerCase())
+                    !['vpc', 'elb', 'alb', 'nlb', 'cloudfront', 'apigateway', 'nat'].includes(t.toLowerCase())
                   ));
                   setUncheckedTypes(networkTypes);
                 }}
