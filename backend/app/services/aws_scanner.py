@@ -226,6 +226,7 @@ class AWSScanner:
                     'region': self.region,
                     'account_id': self.get_account_id(),
                     'vpc_id': lb.get('VpcId'),
+                    'dns_name': lb.get('DNSName', ''),
                     'tags': tags,
                     'type_specific_properties': {
                         'type': lb['Type'],

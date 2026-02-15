@@ -242,35 +242,45 @@ def get_url_flows(
     # Get all route53_record resources (individual DNS records)
     dns_records = db.query(Resource).filter(Resource.type == 'route53_record').all()
     
-    # Get ALL resources across all accounts for matching
-    all_resources = db.query(Resource).filter(Resource.type != 'route53_record', Resource.type != 'route53').all()
+    # Get ALL resources across all accounts for matching (exclude only route53 zones, keep everything else)
+    all_resources = db.query(Resource).filter(Resource.type != 'route53').all()
     
     # Build lookup indexes for matching DNS record values to resources
-    # Index by dns_name (lowercase) for ALBs, CloudFront, etc.
-    dns_name_index = {}  # dns_name -> resource
+    dns_name_index = {}  # dns_name -> resource (exact lowercase, stripped trailing dot)
+    name_index = {}      # resource name (lowercase) -> resource
     public_ip_index = {}  # public_ip -> resource
+    private_ip_index = {} # private_ip -> resource
     resources_by_id = {}
     resources_by_vpc = {}  # vpc_id -> [resources]
+    elb_resources = []     # all load balancers for name-based matching
     
     for r in all_resources:
         resources_by_id[r.id] = r
-        # Index by dns_name
+        # Index by top-level dns_name
         if r.dns_name:
             dns_name_index[r.dns_name.lower().rstrip('.')] = r
-        # Index by type_specific_properties dns_name
+        # Index by type_specific_properties dns_name / domain_name
         props = get_props(r)
         if props.get('dns_name'):
             dns_name_index[props['dns_name'].lower().rstrip('.')] = r
         if props.get('domain_name'):
             dns_name_index[props['domain_name'].lower().rstrip('.')] = r
-        # Index by public IP
+        # Index by resource name (useful for ALB name matching)
+        if r.name:
+            name_index[r.name.lower()] = r
+        # Index by public/private IP
         if r.public_ip:
             public_ip_index[r.public_ip] = r
+        if r.private_ip:
+            private_ip_index[r.private_ip] = r
         if props.get('public_ip'):
             public_ip_index[props['public_ip']] = r
         # Index by VPC
         if r.vpc_id:
             resources_by_vpc.setdefault(r.vpc_id, []).append(r)
+        # Collect ELBs for name-based matching
+        if r.type in ('elb', 'alb', 'nlb', 'elasticloadbalancing'):
+            elb_resources.append(r)
     
     # Get all relationships for manual links
     from app.models import ResourceRelationship
@@ -281,94 +291,116 @@ def get_url_flows(
         outgoing_map.setdefault(rel.source_resource_id, []).append(rel.target_resource_id)
         incoming_map.setdefault(rel.target_resource_id, []).append(rel.source_resource_id)
     
-    def find_linked_resources(resource_id):
-        """Find all resources linked via relationships"""
-        linked = []
-        seen = set()
+    def get_neighbors(resource_id):
+        """Get all resources connected via relationships (both directions)"""
+        neighbors = []
         for tid in outgoing_map.get(resource_id, []):
             r = resources_by_id.get(tid)
-            if r and r.id not in seen:
-                linked.append(r)
-                seen.add(r.id)
+            if r:
+                neighbors.append(r)
         for sid in incoming_map.get(resource_id, []):
             r = resources_by_id.get(sid)
-            if r and r.id not in seen:
-                linked.append(r)
-                seen.add(r.id)
-        return linked
+            if r:
+                neighbors.append(r)
+        return neighbors
     
-    def match_record_to_resources(record):
-        """Match a DNS record's values to actual resources across all accounts"""
+    def try_match_elb_by_name(dns_value):
+        """ALB dns_name format: name-hash.region.elb.amazonaws.com"""
+        dns_lower = dns_value.lower().rstrip('.')
+        results = []
+        for elb in elb_resources:
+            elb_name = (elb.name or '').lower()
+            if not elb_name:
+                continue
+            if dns_lower.startswith(elb_name):
+                results.append(elb)
+                continue
+            elb_dns = (elb.dns_name or '').lower().rstrip('.')
+            if elb_dns and elb_dns == dns_lower:
+                results.append(elb)
+                continue
+            elb_props_dns = (get_props(elb).get('dns_name', '') or '').lower().rstrip('.')
+            if elb_props_dns and elb_props_dns == dns_lower:
+                results.append(elb)
+        return results
+
+    def match_record_direct(record):
+        """Match a DNS record's values to resources via dns_name/IP + ALB name matching"""
         props = get_props(record)
         record_values = props.get('record_values', [])
         alias_target = props.get('alias_target')
-        
         matched = []
         seen_ids = set()
         
-        # Check alias target first (most reliable)
-        if alias_target and alias_target.get('dns_name'):
-            alias_dns = alias_target['dns_name'].lower().rstrip('.')
-            # Direct match
-            if alias_dns in dns_name_index:
-                r = dns_name_index[alias_dns]
-                if r.id not in seen_ids:
-                    matched.append(r)
-                    seen_ids.add(r.id)
-            else:
-                # Partial match - ALB dns names can be long
-                for key, r in dns_name_index.items():
-                    if alias_dns in key or key in alias_dns:
-                        if r.id not in seen_ids:
-                            matched.append(r)
-                            seen_ids.add(r.id)
-        
-        # Check record values (IPs, CNAMEs)
-        for val in record_values:
-            val_clean = val.lower().rstrip('.')
-            # Direct DNS name match
-            if val_clean in dns_name_index:
-                r = dns_name_index[val_clean]
-                if r.id not in seen_ids:
-                    matched.append(r)
-                    seen_ids.add(r.id)
-            # IP match
-            elif val in public_ip_index:
-                r = public_ip_index[val]
-                if r.id not in seen_ids:
-                    matched.append(r)
-                    seen_ids.add(r.id)
-            else:
-                # Partial DNS match
-                for key, r in dns_name_index.items():
-                    if val_clean in key or key in val_clean:
-                        if r.id not in seen_ids:
-                            matched.append(r)
-                            seen_ids.add(r.id)
-        
-        # Also include manually linked resources
-        for r in find_linked_resources(record.id):
+        def add(r):
             if r.id not in seen_ids:
                 matched.append(r)
                 seen_ids.add(r.id)
         
+        # 1. Alias target (Route53 ALIAS records)
+        if alias_target and alias_target.get('dns_name'):
+            alias_dns = alias_target['dns_name'].lower().rstrip('.')
+            if alias_dns in dns_name_index:
+                add(dns_name_index[alias_dns])
+            else:
+                for elb in try_match_elb_by_name(alias_dns):
+                    add(elb)
+                if not matched:
+                    for key, r in dns_name_index.items():
+                        if alias_dns in key or key in alias_dns:
+                            add(r)
+        
+        # 2. Record values (IPs, CNAMEs)
+        for val in record_values:
+            v = val.lower().rstrip('.')
+            if v in dns_name_index:
+                add(dns_name_index[v]); continue
+            if val in public_ip_index:
+                add(public_ip_index[val]); continue
+            if val in private_ip_index:
+                add(private_ip_index[val]); continue
+            elb_hits = try_match_elb_by_name(v)
+            if elb_hits:
+                for e in elb_hits: add(e)
+                continue
+            for key, r in dns_name_index.items():
+                if v in key or key in v:
+                    add(r)
+        
+        # 3. Resources linked via relationships to this DNS record
+        for r in get_neighbors(record.id):
+            add(r)
+        
         return matched
-    
-    def find_downstream(resource, seen_ids):
-        """Given a matched resource (ALB), find its downstream EC2, RDS, etc."""
-        downstream = []
-        # Via relationships
-        for r in find_linked_resources(resource.id):
-            if r.id not in seen_ids:
-                downstream.append(r)
-                seen_ids.add(r.id)
-        # Via same VPC for ALBs
-        if resource.vpc_id and resource.type in ('elb', 'alb', 'nlb', 'elasticloadbalancing'):
-            for r in resources_by_vpc.get(resource.vpc_id, []):
-                if r.id not in seen_ids and r.type in ('ec2', 'instance', 'rds', 'aurora', 'dynamodb', 'elasticache', 'ecs', 'eks'):
-                    downstream.append(r)
-                    seen_ids.add(r.id)
-        return downstream
+
+    def bfs_collect(start_ids, record_id):
+        """BFS through ALL relationships starting from start_ids.
+        Returns dict of resource_id -> resource for the entire reachable chain.
+        Skips route53/route53_record types to avoid looping back."""
+        visited = set(start_ids)
+        visited.add(record_id)
+        queue = list(start_ids)
+        collected = {}
+        
+        while queue:
+            rid = queue.pop(0)
+            r = resources_by_id.get(rid)
+            if r:
+                collected[rid] = r
+            for neighbor in get_neighbors(rid):
+                if neighbor.id not in visited and neighbor.type not in ('route53', 'route53_record'):
+                    visited.add(neighbor.id)
+                    queue.append(neighbor.id)
+        
+        return collected
+
+    # Resource type categorization
+    ELB_TYPES = {'elb', 'alb', 'nlb', 'elasticloadbalancing'}
+    EC2_TYPES = {'ec2', 'instance'}
+    DB_TYPES = {'rds', 'aurora', 'dynamodb', 'elasticache'}
+    CF_TYPES = {'cloudfront'}
+    S3_TYPES = {'s3'}
+    PIPE_TYPES = {'codepipeline', 'codebuild', 'codecommit', 'codedeploy'}
     
     url_flows = []
     
@@ -378,59 +410,34 @@ def get_url_flows(
         record_values = props.get('record_values', [])
         zone_name = props.get('zone_name', '')
         
-        # Auto-match record values to resources
-        direct_matches = match_record_to_resources(record)
+        # Step 1: Auto-match record values to direct targets (ALBs, CloudFront, etc.)
+        direct_matches = match_record_direct(record)
         
-        # Categorize matched resources
-        albs = []
-        cloudfront_list = []
-        ec2_list = []
-        db_list = []
-        s3_list = []
-        pipeline_list = []
-        other_list = []
-        seen_ids = {record.id}
+        # Step 2: BFS through relationships from all direct matches to find full chain
+        start_ids = {r.id for r in direct_matches}
+        all_chain = bfs_collect(start_ids, record.id)
         
-        for r in direct_matches:
-            seen_ids.add(r.id)
-            if r.type in ('elb', 'alb', 'nlb', 'elasticloadbalancing'):
+        # Categorize all collected resources
+        albs, cloudfront_list, ec2_list, db_list = [], [], [], []
+        s3_list, pipeline_list, other_list = [], [], []
+        
+        for r in all_chain.values():
+            if r.type in ELB_TYPES:
                 albs.append(r)
-            elif r.type == 'cloudfront':
+            elif r.type in CF_TYPES:
                 cloudfront_list.append(r)
-            elif r.type in ('ec2', 'instance'):
+            elif r.type in EC2_TYPES:
                 ec2_list.append(r)
-            elif r.type in ('rds', 'aurora', 'dynamodb', 'elasticache'):
+            elif r.type in DB_TYPES:
                 db_list.append(r)
-            elif r.type == 's3':
+            elif r.type in S3_TYPES:
                 s3_list.append(r)
-            elif r.type in ('codepipeline', 'codebuild', 'codecommit', 'codedeploy'):
+            elif r.type in PIPE_TYPES:
                 pipeline_list.append(r)
             else:
                 other_list.append(r)
         
-        # For each ALB, find downstream resources (EC2, RDS, etc.)
-        for alb in albs:
-            downstream = find_downstream(alb, seen_ids)
-            for r in downstream:
-                if r.type in ('ec2', 'instance'):
-                    ec2_list.append(r)
-                elif r.type in ('rds', 'aurora', 'dynamodb', 'elasticache'):
-                    db_list.append(r)
-                elif r.type == 's3':
-                    s3_list.append(r)
-                elif r.type in ('codepipeline', 'codebuild', 'codecommit', 'codedeploy'):
-                    pipeline_list.append(r)
-                else:
-                    other_list.append(r)
-        
-        # For each EC2, find downstream databases
-        for ec2 in list(ec2_list):
-            downstream = find_downstream(ec2, seen_ids)
-            for r in downstream:
-                if r.type in ('rds', 'aurora', 'dynamodb', 'elasticache'):
-                    db_list.append(r)
-                elif r.type == 's3':
-                    s3_list.append(r)
+        total_connections = len(all_chain)
         
         url_flows.append({
             "url": record.name,
@@ -447,7 +454,7 @@ def get_url_flows(
             "s3_buckets": [resource_to_dict(r) for r in s3_list],
             "pipelines": [resource_to_dict(r) for r in pipeline_list],
             "other": [resource_to_dict(r) for r in other_list],
-            "has_connections": len(direct_matches) > 0,
+            "has_connections": total_connections > 0,
         })
     
     # Sort: connected first, then alphabetically
@@ -457,30 +464,30 @@ def get_url_flows(
 
 
 class URLLinkRequest(BaseModel):
-    record_id: int
+    source_resource_id: int
     target_resource_id: int
-    label: str = "manual_dns_link"
+    label: str = "manual_link"
 
 
 @router.post("/url-link")
-def link_url_to_resource(
+def link_resources(
     request: URLLinkRequest,
     db: Session = Depends(get_db)
 ):
-    """Manually link a Route53 DNS record to any resource"""
+    """Manually link any two resources (e.g. DNS→ALB, ALB→EC2, EC2→RDS)"""
     from app.models import ResourceRelationship
     
-    record = db.query(Resource).filter(Resource.id == request.record_id).first()
+    source = db.query(Resource).filter(Resource.id == request.source_resource_id).first()
     target = db.query(Resource).filter(Resource.id == request.target_resource_id).first()
     
-    if not record:
-        raise HTTPException(status_code=404, detail="DNS record not found")
+    if not source:
+        raise HTTPException(status_code=404, detail="Source resource not found")
     if not target:
         raise HTTPException(status_code=404, detail="Target resource not found")
     
     # Check if link already exists
     existing = db.query(ResourceRelationship).filter(
-        ResourceRelationship.source_resource_id == request.record_id,
+        ResourceRelationship.source_resource_id == request.source_resource_id,
         ResourceRelationship.target_resource_id == request.target_resource_id
     ).first()
     
@@ -488,11 +495,11 @@ def link_url_to_resource(
         return {"message": "Link already exists", "relationship_id": existing.id}
     
     rel = ResourceRelationship(
-        source_resource_id=request.record_id,
+        source_resource_id=request.source_resource_id,
         target_resource_id=request.target_resource_id,
         relationship_type="routes_to",
         label=request.label,
-        description=f"DNS record {record.name} routes to {target.name}",
+        description=f"{source.name} → {target.name}",
         direction="unidirectional",
         auto_detected="no",
         confidence="high",
@@ -506,11 +513,11 @@ def link_url_to_resource(
 
 
 @router.delete("/url-link/{relationship_id}")
-def unlink_url_from_resource(
+def unlink_resources(
     relationship_id: int,
     db: Session = Depends(get_db)
 ):
-    """Remove a manual link between a DNS record and a resource"""
+    """Remove a manual link between resources"""
     from app.models import ResourceRelationship
     
     rel = db.query(ResourceRelationship).filter(ResourceRelationship.id == relationship_id).first()
@@ -520,6 +527,62 @@ def unlink_url_from_resource(
     db.delete(rel)
     db.commit()
     return {"message": "Link removed"}
+
+
+@router.get("/url-search-resources")
+def search_resources_for_linking(
+    q: str = "",
+    type_filter: str = "",
+    db: Session = Depends(get_db)
+):
+    """Search resources for manual linking in Navigator. Returns matching resources."""
+    query = db.query(Resource).filter(
+        Resource.type.notin_(['route53', 'route53_record', 'config', 'security_group_rule',
+                              'rds_snapshot', 'rds_backup', 'aurora_snapshot', 'snapshot',
+                              'rds_parameter_group', 'rds_option_group', 'aurora_parameter_group',
+                              'db_subnet_group', 'dhcp_options', 'flow_log'])
+    )
+    if type_filter:
+        query = query.filter(Resource.type == type_filter)
+    if q:
+        search = f"%{q}%"
+        query = query.filter(
+            (Resource.name.ilike(search)) |
+            (Resource.resource_id.ilike(search)) |
+            (Resource.dns_name.ilike(search)) |
+            (Resource.private_ip.ilike(search)) |
+            (Resource.public_ip.ilike(search))
+        )
+    results = query.limit(30).all()
+    
+    import json
+    def get_props(r):
+        if not r.type_specific_properties:
+            return {}
+        try:
+            return json.loads(r.type_specific_properties) if isinstance(r.type_specific_properties, str) else r.type_specific_properties
+        except:
+            return {}
+    
+    output = []
+    for r in results:
+        props = get_props(r)
+        output.append({
+            "id": r.id,
+            "name": r.name,
+            "type": r.type,
+            "resource_id": r.resource_id,
+            "account_id": r.account_id,
+            "region": r.region,
+            "status": r.status,
+            "vpc_id": r.vpc_id,
+            "private_ip": r.private_ip,
+            "public_ip": r.public_ip,
+            "dns_name": r.dns_name or props.get('dns_name', ''),
+            "instance_type": r.instance_type,
+            "type_specific_properties": props,
+        })
+    return output
 
 
 @router.get("/{resource_id}", response_model=ResourceResponse)

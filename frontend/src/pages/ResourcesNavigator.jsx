@@ -1,24 +1,22 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Globe, Search, ChevronRight, ChevronDown, RefreshCw,
-  X, Plus, Link2, Layers, ZoomIn, ZoomOut, Maximize2
+  X, Plus, Link2, Layers, ArrowRight
 } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 import NavBar from '../components/NavBar';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
 
-// Colors per service type
 const TYPE_COLORS = {
   route53_record: '#8C4FFF', route53: '#8C4FFF',
-  elb: '#8C4FFF', alb: '#8C4FFF', nlb: '#8C4FFF', elasticloadbalancing: '#8C4FFF',
+  elb: '#E07941', alb: '#E07941', nlb: '#E07941', elasticloadbalancing: '#E07941',
   ec2: '#FF9900', instance: '#FF9900',
   rds: '#527FFF', aurora: '#527FFF', dynamodb: '#4053D6', elasticache: '#C925D1',
-  cloudfront: '#8C4FFF',
-  s3: '#569A31',
+  cloudfront: '#8C4FFF', s3: '#569A31',
   codepipeline: '#4053D6', codebuild: '#4053D6', codecommit: '#4053D6', codedeploy: '#4053D6',
-  ecs: '#FF9900', eks: '#FF9900',
+  ecs: '#FF9900', eks: '#FF9900', lambda: '#FF9900',
 };
 const TYPE_LABELS = {
   route53_record: 'DNS Record', route53: 'Hosted Zone',
@@ -27,7 +25,7 @@ const TYPE_LABELS = {
   rds: 'RDS', aurora: 'Aurora', dynamodb: 'DynamoDB', elasticache: 'ElastiCache',
   cloudfront: 'CloudFront', s3: 'S3',
   codepipeline: 'Pipeline', codebuild: 'CodeBuild', codecommit: 'CodeCommit', codedeploy: 'CodeDeploy',
-  ecs: 'ECS', eks: 'EKS',
+  ecs: 'ECS', eks: 'EKS', lambda: 'Lambda',
 };
 const TYPE_ICONS = {
   route53_record: 'R53', route53: 'R53',
@@ -36,34 +34,82 @@ const TYPE_ICONS = {
   rds: 'RDS', aurora: 'AUR', dynamodb: 'DDB', elasticache: 'ELC',
   cloudfront: 'CF', s3: 'S3',
   codepipeline: 'PIP', codebuild: 'BLD', codecommit: 'GIT', codedeploy: 'DEP',
-  ecs: 'ECS', eks: 'EKS',
+  ecs: 'ECS', eks: 'EKS', lambda: 'FN',
 };
+
+const LINK_TYPE_SUGGESTIONS = {
+  route53_record: { suggest: 'elb', label: 'Load Balancers' },
+  elb: { suggest: 'ec2', label: 'EC2 Instances' },
+  alb: { suggest: 'ec2', label: 'EC2 Instances' },
+  nlb: { suggest: 'ec2', label: 'EC2 Instances' },
+  elasticloadbalancing: { suggest: 'ec2', label: 'EC2 Instances' },
+  ec2: { suggest: 'rds', label: 'Databases' },
+  instance: { suggest: 'rds', label: 'Databases' },
+  cloudfront: { suggest: 's3', label: 'S3 Buckets' },
+};
+
+// Flow node card component
+function FlowNode({ resource, label, isSelected, onClick, onAddLink }) {
+  const color = TYPE_COLORS[resource?.type] || '#64748B';
+  const active = ['active', 'running', 'deployed', 'available'].includes(resource?.status);
+  return (
+    <div
+      onClick={onClick}
+      className={`relative rounded-lg border cursor-pointer transition-all hover:scale-[1.02] min-w-[200px] max-w-[220px] ${
+        isSelected ? 'ring-2 ring-purple-500 bg-slate-700' : 'bg-slate-800 border-slate-600 hover:border-slate-500'
+      }`}
+      style={{ borderLeftWidth: 4, borderLeftColor: color }}
+    >
+      <div className="p-2.5">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"
+            style={{ backgroundColor: color }}>
+            {TYPE_ICONS[resource?.type] || '?'}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-white truncate">{label || resource?.name || 'Unknown'}</p>
+            <p className="text-[10px] text-slate-400">{TYPE_LABELS[resource?.type] || resource?.type}</p>
+          </div>
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${active ? 'bg-green-500' : 'bg-red-500'}`} />
+        </div>
+        <div className="mt-1.5 text-[9px] text-slate-500 space-y-0.5">
+          {resource?.account_id && <p>Account: ...{resource.account_id.slice(-4)}</p>}
+          {resource?.private_ip && <p>IP: {resource.private_ip}</p>}
+          {resource?.instance_type && <p>{resource.instance_type}</p>}
+          {resource?.dns_name && <p className="truncate">DNS: {resource.dns_name}</p>}
+        </div>
+      </div>
+      {onAddLink && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onAddLink(resource); }}
+          className="absolute -right-2 top-1/2 -translate-y-1/2 w-5 h-5 bg-purple-600 rounded-full flex items-center justify-center hover:bg-purple-500 shadow-lg z-10"
+          title="Add connection"
+        >
+          <Plus className="w-3 h-3 text-white" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 function ResourcesNavigator() {
   const navigate = useNavigate();
-  const canvasRef = useRef(null);
-  
   const [urlFlows, setUrlFlows] = useState([]);
-  const [allResources, setAllResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUrl, setSelectedUrl] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
-  const [hoveredNode, setHoveredNode] = useState(null);
   const [expandedZones, setExpandedZones] = useState(new Set());
-  
-  // Canvas state
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const nodesRef = useRef([]);
-  const edgesRef = useRef([]);
-  
+
   // Manual link modal
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkSearch, setLinkSearch] = useState('');
+  const [linkTypeFilter, setLinkTypeFilter] = useState('');
+  const [linkSourceNode, setLinkSourceNode] = useState(null);
+  const [linkSearchResults, setLinkSearchResults] = useState([]);
+  const [linkSearchLoading, setLinkSearchLoading] = useState(false);
+  const searchTimerRef = useRef(null);
 
   useEffect(() => { fetchData(); }, []);
 
@@ -71,14 +117,13 @@ function ResourcesNavigator() {
     setLoading(true);
     setError(null);
     try {
-      const [flowsRes, resourcesRes] = await Promise.all([
-        axios.get(`${API_URL}/api/resources/url-flows`),
-        axios.get(`${API_URL}/api/resources/?limit=10000`),
-      ]);
+      const flowsRes = await axios.get(`${API_URL}/api/resources/url-flows`);
       setUrlFlows(flowsRes.data);
-      setAllResources(resourcesRes.data.filter(r => r.type !== 'route53' && r.type !== 'route53_record'));
-      if (flowsRes.data.length > 0) setSelectedUrl(flowsRes.data[0]);
-      // Auto-expand all zones
+      if (flowsRes.data.length > 0 && !selectedUrl) setSelectedUrl(flowsRes.data[0]);
+      else if (selectedUrl) {
+        const updated = flowsRes.data.find(f => f.record_id === selectedUrl.record_id);
+        if (updated) setSelectedUrl(updated);
+      }
       const zones = new Set(flowsRes.data.map(f => f.zone_name || 'Unknown Zone'));
       setExpandedZones(zones);
     } catch (err) {
@@ -89,7 +134,6 @@ function ResourcesNavigator() {
     }
   };
 
-  // Group URLs by zone
   const groupedUrls = useMemo(() => {
     const groups = {};
     const q = searchQuery.toLowerCase();
@@ -102,346 +146,104 @@ function ResourcesNavigator() {
     return groups;
   }, [urlFlows, searchQuery]);
 
-  // Build canvas nodes and edges from selectedUrl
-  const buildDiagram = useCallback(() => {
-    if (!selectedUrl || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const W = canvas.offsetWidth;
-    const H = canvas.offsetHeight;
-    
-    const nodes = [];
-    const edges = [];
-    let nodeId = 0;
-    
-    const addNode = (resource, col, row, totalInCol, label) => {
-      const colSpacing = 220;
-      const startX = 80;
-      const x = startX + col * colSpacing;
-      const rowHeight = Math.min(90, (H - 100) / Math.max(totalInCol, 1));
-      const startY = (H / 2) - ((totalInCol - 1) * rowHeight / 2);
-      const y = startY + row * rowHeight;
-      const id = nodeId++;
-      nodes.push({ id, resource, x, y, col, label });
-      return id;
-    };
-    
-    // Column 0: DNS Record
-    const dnsId = addNode(selectedUrl.record, 0, 0, 1, selectedUrl.url);
-    
-    // Column 1: ALBs / CloudFront (direct targets)
+  // Build columns for the flow diagram
+  const flowColumns = useMemo(() => {
+    if (!selectedUrl) return [];
+    const cols = [];
+    // Col 0: DNS Record
+    cols.push({ label: 'DNS Record', items: [{ ...selectedUrl.record, _label: selectedUrl.url }] });
+    // Col 1: ALBs + CloudFront
     const col1 = [...(selectedUrl.albs || []), ...(selectedUrl.cloudfront || [])];
-    const col1Ids = [];
-    col1.forEach((r, i) => {
-      const id = addNode(r, 1, i, col1.length);
-      col1Ids.push(id);
-      edges.push({ from: dnsId, to: id, label: selectedUrl.record_type === 'A' ? 'ALIAS' : 'CNAME' });
-    });
-    
-    // If no direct targets, show placeholder
-    if (col1.length === 0 && selectedUrl.record_values?.length > 0) {
-      const placeholderId = nodeId++;
-      nodes.push({
-        id: placeholderId,
-        resource: { name: selectedUrl.record_values[0], type: 'unknown', status: 'unresolved' },
-        x: 80 + 220, y: H / 2, col: 1, label: selectedUrl.record_values[0],
-        isPlaceholder: true,
-      });
+    if (col1.length > 0) cols.push({ label: 'Load Balancer / CDN', items: col1 });
+    else if (selectedUrl.record_values?.length > 0) {
+      cols.push({ label: 'Target (unresolved)', items: [{ name: selectedUrl.record_values[0], type: 'unknown', status: 'unresolved', _placeholder: true }] });
     }
-    
-    // Column 2: EC2 instances
+    // Col 2: EC2
     const ec2s = selectedUrl.ec2_instances || [];
-    const col2Ids = [];
-    ec2s.forEach((r, i) => {
-      const id = addNode(r, 2, i, ec2s.length);
-      col2Ids.push(id);
-      // Connect from ALBs
-      col1Ids.forEach(albId => {
-        const albNode = nodes.find(n => n.id === albId);
-        if (albNode && ['elb', 'alb', 'nlb', 'elasticloadbalancing'].includes(albNode.resource.type)) {
-          edges.push({ from: albId, to: id, label: 'HTTP' });
-        }
-      });
-    });
-    
-    // Column 3: Databases
+    if (ec2s.length > 0) cols.push({ label: 'EC2 Instances', items: ec2s });
+    // Col 3: Databases
     const dbs = selectedUrl.databases || [];
-    dbs.forEach((r, i) => {
-      const id = addNode(r, 3, i, dbs.length);
-      // Connect from EC2s
-      if (col2Ids.length > 0) {
-        edges.push({ from: col2Ids[0], to: id, label: 'Query' });
-      }
-    });
-    
-    // Column 4: S3 + Pipelines
+    if (dbs.length > 0) cols.push({ label: 'Databases', items: dbs });
+    // Col 4: S3 + Pipelines + Other
     const extras = [...(selectedUrl.s3_buckets || []), ...(selectedUrl.pipelines || []), ...(selectedUrl.other || [])];
-    extras.forEach((r, i) => {
-      const id = addNode(r, 4, i, extras.length);
-      // Connect from EC2 or ALB
-      if (col2Ids.length > 0) {
-        edges.push({ from: col2Ids[0], to: id, label: '' });
-      } else if (col1Ids.length > 0) {
-        edges.push({ from: col1Ids[0], to: id, label: '' });
-      }
-    });
-    
-    nodesRef.current = nodes;
-    edgesRef.current = edges;
+    if (extras.length > 0) cols.push({ label: 'Storage / CI/CD / Other', items: extras });
+    return cols;
   }, [selectedUrl]);
 
-  // Draw canvas
-  const drawCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    
-    // Background
-    ctx.fillStyle = '#0F172A';
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    
-    // Grid
-    ctx.strokeStyle = '#1E293B';
-    ctx.lineWidth = 0.5;
-    const gs = 30;
-    for (let x = (pan.x % gs + gs) % gs; x < rect.width; x += gs) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke();
+  // Link modal
+  const openLinkModal = (sourceNode) => {
+    setLinkSourceNode(sourceNode);
+    setLinkSearch('');
+    setLinkTypeFilter('');
+    setLinkSearchResults([]);
+    setShowLinkModal(true);
+    const suggestion = LINK_TYPE_SUGGESTIONS[sourceNode?.type];
+    if (suggestion) {
+      setLinkTypeFilter(suggestion.suggest);
+      doSearch('', suggestion.suggest);
+    } else {
+      doSearch('', '');
     }
-    for (let y = (pan.y % gs + gs) % gs; y < rect.height; y += gs) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke();
-    }
-    
-    ctx.save();
-    ctx.translate(pan.x, pan.y);
-    ctx.scale(zoom, zoom);
-    
-    const nodes = nodesRef.current;
-    const edges = edgesRef.current;
-    
-    // Draw edges
-    edges.forEach(edge => {
-      const from = nodes.find(n => n.id === edge.from);
-      const to = nodes.find(n => n.id === edge.to);
-      if (!from || !to) return;
-      
-      const nodeW = 180, nodeH = 70;
-      const x1 = from.x + nodeW;
-      const y1 = from.y + nodeH / 2;
-      const x2 = to.x;
-      const y2 = to.y + nodeH / 2;
-      
-      // Curved line
-      const cpx = (x1 + x2) / 2;
-      ctx.strokeStyle = '#3B82F6';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.bezierCurveTo(cpx, y1, cpx, y2, x2, y2);
-      ctx.stroke();
-      
-      // Arrow
-      const angle = Math.atan2(y2 - y1, x2 - cpx);
-      ctx.fillStyle = '#3B82F6';
-      ctx.beginPath();
-      ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 - 8 * Math.cos(angle - 0.4), y2 - 8 * Math.sin(angle - 0.4));
-      ctx.lineTo(x2 - 8 * Math.cos(angle + 0.4), y2 - 8 * Math.sin(angle + 0.4));
-      ctx.closePath();
-      ctx.fill();
-      
-      // Label
-      if (edge.label) {
-        const mx = (x1 + x2) / 2;
-        const my = (y1 + y2) / 2 - 8;
-        ctx.fillStyle = '#64748B';
-        ctx.font = '10px Inter, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(edge.label, mx, my);
-      }
-    });
-    
-    // Draw nodes
-    nodes.forEach(node => {
-      const nodeW = 180, nodeH = 70;
-      const x = node.x, y = node.y;
-      const color = TYPE_COLORS[node.resource?.type] || '#64748B';
-      const isHovered = hoveredNode?.id === node.id;
-      const isSelected = selectedNode?.id === node.resource?.id;
-      
-      // Shadow
-      if (isHovered || isSelected) {
-        ctx.shadowColor = color + '60';
-        ctx.shadowBlur = 15;
-      }
-      
-      // Card background
-      ctx.fillStyle = isSelected ? '#1E3A5F' : '#1E293B';
-      ctx.strokeStyle = isHovered || isSelected ? color : '#334155';
-      ctx.lineWidth = isHovered || isSelected ? 2 : 1;
-      ctx.beginPath();
-      ctx.roundRect(x, y, nodeW, nodeH, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      
-      // Color bar on left
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.roundRect(x, y, 5, nodeH, [8, 0, 0, 8]);
-      ctx.fill();
-      
-      // Icon circle
-      ctx.fillStyle = color + '30';
-      ctx.beginPath();
-      ctx.arc(x + 28, y + nodeH / 2, 14, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.font = 'bold 9px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(TYPE_ICONS[node.resource?.type] || '?', x + 28, y + nodeH / 2);
-      
-      // Name
-      ctx.fillStyle = '#F1F5F9';
-      ctx.font = 'bold 11px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      let name = node.resource?.name || 'Unknown';
-      if (name.length > 20) name = name.substring(0, 18) + '..';
-      ctx.fillText(name, x + 48, y + 10);
-      
-      // Type label
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '10px Inter, system-ui, sans-serif';
-      ctx.fillText(TYPE_LABELS[node.resource?.type] || node.resource?.type || '', x + 48, y + 26);
-      
-      // Account / IP info
-      ctx.fillStyle = '#64748B';
-      ctx.font = '9px Inter, system-ui, sans-serif';
-      const info = node.resource?.private_ip || node.resource?.instance_type || 
-                   (node.resource?.account_id ? `Acct: ...${node.resource.account_id.slice(-4)}` : '');
-      if (info) ctx.fillText(info, x + 48, y + 42);
-      
-      // Status dot
-      if (node.resource?.status) {
-        const active = ['active', 'running', 'deployed', 'available'].includes(node.resource.status);
-        ctx.fillStyle = active ? '#22C55E' : '#EF4444';
-        ctx.beginPath();
-        ctx.arc(x + nodeW - 14, y + 14, 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      
-      // Store hit area
-      node.hitX = x; node.hitY = y; node.hitW = nodeW; node.hitH = nodeH;
-    });
-    
-    // Title bar
-    if (selectedUrl) {
-      ctx.fillStyle = '#0F172A';
-      ctx.fillRect(0, 0, 600, 36);
-      ctx.fillStyle = '#8C4FFF';
-      ctx.font = 'bold 13px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`${selectedUrl.url}  [${selectedUrl.record_type || 'A'}]  →  ${selectedUrl.record_values?.join(', ') || ''}`, 12, 18);
-    }
-    
-    ctx.restore();
-  }, [selectedUrl, zoom, pan, hoveredNode, selectedNode]);
-
-  useEffect(() => { buildDiagram(); }, [buildDiagram]);
-  useEffect(() => { drawCanvas(); }, [drawCanvas]);
-
-  // Canvas event handlers
-  const getCanvasPos = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    return { x: (e.clientX - rect.left - pan.x) / zoom, y: (e.clientY - rect.top - pan.y) / zoom };
-  };
-  
-  const findNodeAt = (pos) => {
-    return nodesRef.current.find(n => 
-      pos.x >= n.hitX && pos.x <= n.hitX + n.hitW && pos.y >= n.hitY && pos.y <= n.hitY + n.hitH
-    );
   };
 
-  const handleCanvasClick = (e) => {
-    const pos = getCanvasPos(e);
-    const node = findNodeAt(pos);
-    setSelectedNode(node ? node.resource : null);
-    drawCanvas();
+  const doSearch = async (query, typeFilter) => {
+    setLinkSearchLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      if (typeFilter) params.set('type_filter', typeFilter);
+      const res = await axios.get(`${API_URL}/api/resources/url-search-resources?${params}`);
+      setLinkSearchResults(res.data);
+    } catch (err) {
+      setLinkSearchResults([]);
+    } finally {
+      setLinkSearchLoading(false);
+    }
   };
 
-  const handleCanvasMouseMove = (e) => {
-    if (isDragging) {
-      setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
-      return;
-    }
-    const pos = getCanvasPos(e);
-    const node = findNodeAt(pos);
-    if (node !== hoveredNode) {
-      setHoveredNode(node || null);
-    }
-    if (canvasRef.current) canvasRef.current.style.cursor = node ? 'pointer' : (isDragging ? 'grabbing' : 'grab');
+  const handleLinkSearchChange = (value) => {
+    setLinkSearch(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => doSearch(value, linkTypeFilter), 300);
   };
 
-  const handleMouseDown = (e) => { setIsDragging(true); setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); };
-  const handleMouseUp = () => setIsDragging(false);
-  const handleWheel = (e) => { e.preventDefault(); setZoom(z => Math.max(0.3, Math.min(3, z * (e.deltaY > 0 ? 0.9 : 1.1)))); };
+  const handleLinkTypeFilterChange = (tf) => {
+    setLinkTypeFilter(tf);
+    doSearch(linkSearch, tf);
+  };
 
-  const resetView = () => { setPan({ x: 0, y: 0 }); setZoom(1); };
-
-  // Manual link
   const handleManualLink = async (targetResource) => {
-    if (!selectedUrl) return;
+    const sourceId = linkSourceNode?.id || selectedUrl?.record_id;
+    if (!sourceId) return;
     try {
       await axios.post(`${API_URL}/api/resources/url-link`, {
-        record_id: selectedUrl.record_id,
+        source_resource_id: sourceId,
         target_resource_id: targetResource.id,
         label: 'manual_link',
       });
       setShowLinkModal(false);
-      setLinkSearch('');
+      setLinkSourceNode(null);
       fetchData();
     } catch (err) {
-      console.error('Failed to link', err);
       alert('Failed to create link: ' + (err.response?.data?.detail || err.message));
     }
   };
-
-  const filteredLinkResources = useMemo(() => {
-    if (!linkSearch) return [];
-    const q = linkSearch.toLowerCase();
-    return allResources.filter(r =>
-      r.name?.toLowerCase().includes(q) || r.type?.toLowerCase().includes(q) || r.resource_id?.toLowerCase().includes(q)
-    ).slice(0, 20);
-  }, [allResources, linkSearch]);
 
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-900 text-white">
         <NavBar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading URL flows...</p>
-          </div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto mb-4"></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-900 text-white">
+    <div className="h-screen flex flex-col bg-slate-900 text-white overflow-hidden">
       <NavBar />
-      
-      {/* Header */}
-      <header className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex justify-between items-center">
+      <header className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex justify-between items-center flex-shrink-0">
         <div className="flex items-center gap-3">
           <Globe className="w-5 h-5 text-purple-400" />
           <h1 className="text-lg font-bold">URL Navigator</h1>
@@ -457,116 +259,125 @@ function ResourcesNavigator() {
         </div>
       </header>
 
-      <div className="flex-1 flex">
-        {/* Main Canvas */}
-        <div className="flex-1 relative">
-          {error ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <Globe className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-                <p className="text-slate-400 mb-4">{error}</p>
-                <button onClick={fetchData} className="px-4 py-2 bg-cyan-600 rounded-lg hover:bg-cyan-700 text-sm">Retry</button>
-              </div>
-            </div>
-          ) : !selectedUrl ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <Globe className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-                <h3 className="text-lg text-slate-300 mb-2">Select a URL record</h3>
-                <p className="text-sm text-slate-500">Choose a DNS record from the sidebar</p>
-              </div>
-            </div>
-          ) : (
-            <canvas
-              ref={canvasRef}
-              className="w-full h-full"
-              onClick={handleCanvasClick}
-              onMouseMove={handleCanvasMouseMove}
-              onMouseDown={handleMouseDown}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              onWheel={handleWheel}
-            />
-          )}
-          
-          {/* Canvas controls */}
-          <div className="absolute top-4 left-4 flex gap-1">
-            <button onClick={() => setZoom(z => Math.min(3, z + 0.2))} className="p-1.5 bg-slate-800 border border-slate-700 rounded hover:bg-slate-700"><ZoomIn className="w-3.5 h-3.5" /></button>
-            <span className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-[10px]">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(z => Math.max(0.3, z - 0.2))} className="p-1.5 bg-slate-800 border border-slate-700 rounded hover:bg-slate-700"><ZoomOut className="w-3.5 h-3.5" /></button>
-            <button onClick={resetView} className="p-1.5 bg-slate-800 border border-slate-700 rounded hover:bg-slate-700"><Maximize2 className="w-3.5 h-3.5" /></button>
-          </div>
-          
-          {/* Manual link button */}
+      <div className="flex-1 flex min-h-0">
+        {/* Main Flow Diagram */}
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* URL title bar */}
           {selectedUrl && (
-            <div className="absolute bottom-4 left-4">
-              <button 
-                onClick={() => setShowLinkModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 rounded-lg hover:bg-purple-700 text-xs font-medium shadow-lg"
-              >
-                <Link2 className="w-3.5 h-3.5" /> Link Resource
-              </button>
+            <div className="bg-slate-800/80 border-b border-slate-700 px-4 py-2 flex items-center gap-2 flex-shrink-0">
+              <span className="text-purple-400 font-bold text-sm">{selectedUrl.url}</span>
+              <span className="text-[10px] px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">{selectedUrl.record_type}</span>
+              <ArrowRight className="w-3 h-3 text-slate-500" />
+              <span className="text-[10px] text-slate-500 truncate">{selectedUrl.record_values?.join(', ')}</span>
+              <div className="ml-auto">
+                <button onClick={() => openLinkModal(selectedUrl.record)} className="flex items-center gap-1 px-2 py-1 bg-purple-600 rounded hover:bg-purple-700 text-[10px] font-medium">
+                  <Plus className="w-3 h-3" /> Add Connection
+                </button>
+              </div>
             </div>
           )}
-          
-          {/* Selected node detail panel */}
-          {selectedNode && (
-            <div className="absolute top-0 right-0 w-72 h-full bg-slate-800 border-l border-slate-700 z-10 flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-3 border-b border-slate-700 flex items-center justify-between">
-                <h3 className="font-bold text-xs">Resource Details</h3>
-                <button onClick={() => setSelectedNode(null)} className="p-1 hover:bg-slate-700 rounded"><X className="w-3.5 h-3.5" /></button>
+
+          {/* Flow diagram area */}
+          <div className="flex-1 overflow-auto p-6">
+            {error ? (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                  <Globe className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+                  <p className="text-slate-400 mb-4">{error}</p>
+                  <button onClick={fetchData} className="px-4 py-2 bg-cyan-600 rounded-lg hover:bg-cyan-700 text-sm">Retry</button>
+                </div>
               </div>
-              <div className="p-3 flex-1 overflow-y-auto space-y-2 text-xs">
-                <div className="flex items-center gap-2">
+            ) : !selectedUrl ? (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                  <Globe className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+                  <h3 className="text-lg text-slate-300 mb-2">Select a URL record</h3>
+                  <p className="text-sm text-slate-500">Choose a DNS record from the sidebar to see its flow</p>
+                </div>
+              </div>
+            ) : flowColumns.length === 0 ? (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-slate-500">No data for this record</p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 min-h-full">
+                {flowColumns.map((col, colIdx) => (
+                  <div key={colIdx} className="flex items-center gap-2">
+                    {/* Column */}
+                    <div className="flex flex-col gap-3">
+                      <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider text-center mb-1">{col.label}</p>
+                      {col.items.map((item, itemIdx) => (
+                        <FlowNode
+                          key={item.id || `${colIdx}-${itemIdx}`}
+                          resource={item}
+                          label={item._label}
+                          isSelected={selectedNode?.id === item.id}
+                          onClick={() => setSelectedNode(selectedNode?.id === item.id ? null : item)}
+                          onAddLink={item._placeholder ? null : openLinkModal}
+                        />
+                      ))}
+                    </div>
+                    {/* Arrow between columns */}
+                    {colIdx < flowColumns.length - 1 && (
+                      <div className="flex flex-col items-center justify-center px-1 self-center">
+                        <ArrowRight className="w-5 h-5 text-blue-500" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Detail panel at bottom */}
+          {selectedNode && (
+            <div className="bg-slate-800 border-t border-slate-700 flex-shrink-0 max-h-[200px] overflow-y-auto">
+              <div className="p-3 flex items-start gap-4">
+                <div className="flex items-center gap-2 min-w-[200px]">
                   <div className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-[10px]"
                     style={{ backgroundColor: TYPE_COLORS[selectedNode.type] || '#64748B' }}>
                     {TYPE_ICONS[selectedNode.type] || '?'}
                   </div>
                   <div>
                     <p className="font-semibold text-sm">{selectedNode.name}</p>
-                    <p className="text-slate-400">{TYPE_LABELS[selectedNode.type] || selectedNode.type}</p>
+                    <p className="text-[10px] text-slate-400">{TYPE_LABELS[selectedNode.type] || selectedNode.type}</p>
                   </div>
+                  <button onClick={() => setSelectedNode(null)} className="ml-2 p-1 hover:bg-slate-700 rounded"><X className="w-3 h-3" /></button>
                 </div>
-                {[
-                  ['Resource ID', selectedNode.resource_id],
-                  ['Account', selectedNode.account_id],
-                  ['Region', selectedNode.region],
-                  ['Status', selectedNode.status],
-                  ['VPC', selectedNode.vpc_id],
-                  ['Subnet', selectedNode.subnet_id],
-                  ['Instance Type', selectedNode.instance_type],
-                  ['Private IP', selectedNode.private_ip],
-                  ['Public IP', selectedNode.public_ip],
-                  ['DNS Name', selectedNode.dns_name],
-                  ['Environment', selectedNode.environment],
-                ].filter(([, v]) => v).map(([label, value]) => (
-                  <div key={label} className="flex justify-between py-1">
-                    <span className="text-slate-400">{label}</span>
-                    <span className="font-mono text-slate-300 text-right max-w-[140px] truncate">{value}</span>
-                  </div>
-                ))}
-                {selectedNode.type_specific_properties && Object.keys(selectedNode.type_specific_properties).length > 0 && (
-                  <div className="pt-2 border-t border-slate-700">
-                    <p className="text-slate-400 font-medium mb-1">Properties</p>
-                    {Object.entries(selectedNode.type_specific_properties).slice(0, 15).map(([k, v]) => (
-                      <div key={k} className="flex justify-between py-0.5">
-                        <span className="text-slate-500">{k.replace(/_/g, ' ')}</span>
-                        <span className="text-slate-300 max-w-[120px] truncate font-mono text-[10px]">
-                          {typeof v === 'object' ? JSON.stringify(v).slice(0, 25) : String(v)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div className="flex-1 grid grid-cols-4 gap-x-4 gap-y-1 text-[10px]">
+                  {[
+                    ['Resource ID', selectedNode.resource_id],
+                    ['Account', selectedNode.account_id],
+                    ['Region', selectedNode.region],
+                    ['Status', selectedNode.status],
+                    ['VPC', selectedNode.vpc_id],
+                    ['Instance Type', selectedNode.instance_type],
+                    ['Private IP', selectedNode.private_ip],
+                    ['Public IP', selectedNode.public_ip],
+                    ['DNS Name', selectedNode.dns_name],
+                    ['Environment', selectedNode.environment],
+                  ].filter(([, v]) => v).map(([label, value]) => (
+                    <div key={label}>
+                      <span className="text-slate-500">{label}: </span>
+                      <span className="text-slate-300 font-mono">{value}</span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => openLinkModal(selectedNode)}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 rounded-lg hover:bg-purple-700 text-[10px] font-medium flex-shrink-0"
+                >
+                  <Plus className="w-3 h-3" /> Add Connection
+                </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* Right Sidebar - URL Records grouped by zone */}
-        <div className="w-80 bg-slate-800 border-l border-slate-700 flex flex-col flex-shrink-0">
+        {/* Right Sidebar */}
+        <div className="w-72 bg-slate-800 border-l border-slate-700 flex flex-col flex-shrink-0">
           <div className="p-3 border-b border-slate-700">
-            <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+            <h3 className="font-bold text-[11px] mb-2 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 text-purple-400" /> Route 53 DNS Records
             </h3>
             <div className="relative">
@@ -578,13 +389,12 @@ function ResourcesNavigator() {
               />
             </div>
           </div>
-          
           <div className="flex-1 overflow-y-auto">
             {Object.keys(groupedUrls).length === 0 ? (
               <div className="p-6 text-center text-slate-500">
                 <Globe className="w-10 h-10 mx-auto mb-2 text-slate-600" />
                 <p className="text-xs">No DNS records found</p>
-                <p className="text-[10px] mt-1">Rescan account 318 to import Route 53 records</p>
+                <p className="text-[10px] mt-1">Rescan account to import Route 53 records</p>
               </div>
             ) : (
               Object.entries(groupedUrls).map(([zone, records]) => (
@@ -595,39 +405,38 @@ function ResourcesNavigator() {
                       next.has(zone) ? next.delete(zone) : next.add(zone);
                       return next;
                     })}
-                    className="w-full px-3 py-2 flex items-center gap-2 bg-slate-750 hover:bg-slate-700 border-b border-slate-700 text-left"
+                    className="w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-700 border-b border-slate-700 text-left"
                   >
                     {expandedZones.has(zone) ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
                     <Globe className="w-3 h-3 text-purple-400" />
-                    <span className="text-xs font-semibold text-slate-300 flex-1 truncate">{zone}</span>
+                    <span className="text-[11px] font-semibold text-slate-300 flex-1 truncate">{zone}</span>
                     <span className="text-[10px] text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded">{records.length}</span>
                   </button>
-                  {expandedZones.has(zone) && records.map((flow, idx) => (
-                    <div
-                      key={`${flow.record_id}-${idx}`}
-                      onClick={() => { setSelectedUrl(flow); setSelectedNode(null); resetView(); }}
-                      className={`px-3 py-2 border-b border-slate-700/50 cursor-pointer transition hover:bg-slate-700 ${
-                        selectedUrl?.record_id === flow.record_id ? 'bg-purple-900/30 border-l-2 border-l-purple-500' : 'pl-7'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium truncate text-white">{flow.url}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[10px] px-1 py-0 bg-slate-700 text-slate-400 rounded">{flow.record_type}</span>
-                            {flow.has_connections ? (
-                              <span className="text-[10px] text-green-400">connected</span>
-                            ) : (
-                              <span className="text-[10px] text-slate-500">no match</span>
-                            )}
-                            {flow.albs?.length > 0 && <span className="text-[10px] px-1 bg-purple-900/50 text-purple-300 rounded">ALB</span>}
-                            {flow.ec2_instances?.length > 0 && <span className="text-[10px] px-1 bg-orange-900/50 text-orange-300 rounded">{flow.ec2_instances.length} EC2</span>}
-                          </div>
+                  {expandedZones.has(zone) && records.map((flow, idx) => {
+                    const totalConn = (flow.albs?.length || 0) + (flow.ec2_instances?.length || 0) + (flow.databases?.length || 0) + (flow.s3_buckets?.length || 0) + (flow.pipelines?.length || 0) + (flow.cloudfront?.length || 0) + (flow.other?.length || 0);
+                    return (
+                      <div
+                        key={`${flow.record_id}-${idx}`}
+                        onClick={() => { setSelectedUrl(flow); setSelectedNode(null); }}
+                        className={`px-3 py-2 border-b border-slate-700/50 cursor-pointer transition hover:bg-slate-700 ${
+                          selectedUrl?.record_id === flow.record_id ? 'bg-purple-900/30 border-l-2 border-l-purple-500' : 'pl-6'
+                        }`}
+                      >
+                        <p className="text-[11px] font-medium truncate text-white">{flow.url}</p>
+                        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                          <span className="text-[9px] px-1 bg-slate-700 text-slate-400 rounded">{flow.record_type}</span>
+                          {totalConn > 0 ? (
+                            <span className="text-[9px] text-green-400">{totalConn} connected</span>
+                          ) : (
+                            <span className="text-[9px] text-slate-500">no match</span>
+                          )}
+                          {flow.albs?.length > 0 && <span className="text-[9px] px-1 bg-orange-900/40 text-orange-300 rounded">{flow.albs.length} ALB</span>}
+                          {flow.ec2_instances?.length > 0 && <span className="text-[9px] px-1 bg-yellow-900/40 text-yellow-300 rounded">{flow.ec2_instances.length} EC2</span>}
+                          {flow.pipelines?.length > 0 && <span className="text-[9px] px-1 bg-blue-900/40 text-blue-300 rounded">{flow.pipelines.length} CI/CD</span>}
                         </div>
-                        <ChevronRight className="w-3 h-3 text-slate-500 flex-shrink-0" />
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))
             )}
@@ -637,49 +446,97 @@ function ResourcesNavigator() {
 
       {/* Manual Link Modal */}
       {showLinkModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={() => setShowLinkModal(false)}>
-          <div className="bg-slate-800 border border-slate-700 rounded-xl w-[500px] max-h-[600px] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-              <h3 className="font-bold text-sm flex items-center gap-2">
-                <Link2 className="w-4 h-4 text-purple-400" />
-                Link Resource to: <span className="text-purple-300">{selectedUrl?.url}</span>
-              </h3>
-              <button onClick={() => setShowLinkModal(false)} className="p-1 hover:bg-slate-700 rounded"><X className="w-4 h-4" /></button>
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={() => { setShowLinkModal(false); setLinkSourceNode(null); }}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl w-[560px] max-h-[650px] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-bold text-sm flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-purple-400" /> Add Connection
+                </h3>
+                <button onClick={() => { setShowLinkModal(false); setLinkSourceNode(null); }} className="p-1 hover:bg-slate-700 rounded"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="flex items-center gap-2 p-2 bg-slate-700/50 rounded-lg">
+                <div className="w-7 h-7 rounded flex items-center justify-center text-white text-[9px] font-bold"
+                  style={{ backgroundColor: TYPE_COLORS[linkSourceNode?.type] || '#64748B' }}>
+                  {TYPE_ICONS[linkSourceNode?.type] || '?'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{linkSourceNode?.name || 'Unknown'}</p>
+                  <p className="text-[10px] text-slate-400">{TYPE_LABELS[linkSourceNode?.type] || linkSourceNode?.type}</p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-purple-400" />
+                <span className="text-xs text-purple-300">Select target</span>
+              </div>
             </div>
-            <div className="p-4">
+            <div className="p-3 border-b border-slate-700 space-y-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                  type="text" value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)}
-                  placeholder="Search resources by name, type, or ID..."
+                  type="text" value={linkSearch} onChange={(e) => handleLinkSearchChange(e.target.value)}
+                  placeholder="Search by name, IP, DNS, or ID..."
                   className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-400 focus:border-purple-500 focus:outline-none"
                   autoFocus
                 />
               </div>
+              <div className="flex flex-wrap gap-1">
+                <button onClick={() => handleLinkTypeFilterChange('')}
+                  className={`px-2 py-1 rounded text-[10px] font-medium ${!linkTypeFilter ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                >All</button>
+                {[
+                  { type: 'elb', label: 'Load Balancers' },
+                  { type: 'ec2', label: 'EC2' },
+                  { type: 'rds', label: 'RDS' },
+                  { type: 'cloudfront', label: 'CloudFront' },
+                  { type: 's3', label: 'S3' },
+                  { type: 'ecs', label: 'ECS' },
+                  { type: 'lambda', label: 'Lambda' },
+                  { type: 'codepipeline', label: 'Pipeline' },
+                ].map(t => (
+                  <button key={t.type}
+                    onClick={() => handleLinkTypeFilterChange(t.type === linkTypeFilter ? '' : t.type)}
+                    className={`px-2 py-1 rounded text-[10px] font-medium ${linkTypeFilter === t.type ? 'text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                    style={linkTypeFilter === t.type ? { backgroundColor: TYPE_COLORS[t.type] || '#64748B' } : {}}
+                  >{t.label}</button>
+                ))}
+              </div>
+              {linkSourceNode && LINK_TYPE_SUGGESTIONS[linkSourceNode.type] && (
+                <p className="text-[10px] text-purple-400">
+                  Tip: {TYPE_LABELS[linkSourceNode.type]} typically connects to {LINK_TYPE_SUGGESTIONS[linkSourceNode.type].label}
+                </p>
+              )}
             </div>
-            <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-1">
-              {filteredLinkResources.length === 0 ? (
-                <p className="text-center text-slate-500 text-xs py-4">
-                  {linkSearch ? 'No resources found' : 'Type to search resources...'}
+            <div className="flex-1 overflow-y-auto px-3 pb-3">
+              {linkSearchLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-500"></div>
+                </div>
+              ) : linkSearchResults.length === 0 ? (
+                <p className="text-center text-slate-500 text-xs py-6">
+                  {linkSearch || linkTypeFilter ? 'No resources found' : 'Search or select a type filter'}
                 </p>
               ) : (
-                filteredLinkResources.map(r => (
-                  <div
-                    key={r.id}
-                    onClick={() => handleManualLink(r)}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-700 cursor-pointer transition"
-                  >
-                    <div className="w-8 h-8 rounded flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0"
-                      style={{ backgroundColor: TYPE_COLORS[r.type] || '#64748B' }}>
-                      {TYPE_ICONS[r.type] || '?'}
+                <div className="space-y-0.5 mt-1">
+                  <p className="text-[10px] text-slate-500 px-1 mb-1">{linkSearchResults.length} results</p>
+                  {linkSearchResults.map(r => (
+                    <div key={r.id} onClick={() => handleManualLink(r)}
+                      className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-700 cursor-pointer group">
+                      <div className="w-8 h-8 rounded flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"
+                        style={{ backgroundColor: TYPE_COLORS[r.type] || '#64748B' }}>
+                        {TYPE_ICONS[r.type] || '?'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{r.name}</p>
+                        <p className="text-[10px] text-slate-400 truncate">
+                          {TYPE_LABELS[r.type] || r.type}
+                          {r.account_id && <> &middot; ...{r.account_id.slice(-4)}</>}
+                          {r.private_ip && <> &middot; {r.private_ip}</>}
+                          {r.dns_name && <> &middot; {r.dns_name.length > 30 ? r.dns_name.slice(0, 28) + '..' : r.dns_name}</>}
+                        </p>
+                      </div>
+                      <Plus className="w-4 h-4 text-purple-400 opacity-0 group-hover:opacity-100 flex-shrink-0" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">{r.name}</p>
-                      <p className="text-[10px] text-slate-400">{TYPE_LABELS[r.type] || r.type} &middot; Acct: ...{r.account_id?.slice(-4) || '?'}</p>
-                    </div>
-                    <Plus className="w-4 h-4 text-purple-400 flex-shrink-0" />
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
           </div>
