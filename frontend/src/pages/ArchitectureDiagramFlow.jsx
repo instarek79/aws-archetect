@@ -33,6 +33,15 @@ import { calculateTotalCost, formatCost } from '../utils/costEstimation';
 import { generateCloudFormation, generateTerraform } from '../utils/iacExport';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
+const DEBUG_DIAGRAM = import.meta.env.VITE_DEBUG_DIAGRAM === 'true';
+
+const debugLog = (...args) => {
+  if (DEBUG_DIAGRAM) console.log(...args);
+};
+
+const debugWarn = (...args) => {
+  if (DEBUG_DIAGRAM) console.warn(...args);
+};
 
 // ELK instance for advanced layout
 const elk = new ELK();
@@ -570,11 +579,11 @@ function ArchitectureDiagramFlow() {
     const accountList = Array.from(accountSet);
     
     // Diagnostic: log all unique accounts found
-    console.log(`🏢 ACCOUNTS FOUND: ${accountList.length}`, accountList);
+    debugLog(`🏢 ACCOUNTS FOUND: ${accountList.length}`, accountList);
     resources.forEach(r => {
       const key = getAccountKey(r);
       if (!accountList.includes(key)) {
-        console.warn(`⚠️ Resource ${r.id} has unmapped account: account_id=${r.account_id}, account_name=${r.account_name}, key=${key}`);
+        debugWarn(`⚠️ Resource ${r.id} has unmapped account: account_id=${r.account_id}, account_name=${r.account_name}, key=${key}`);
       }
     });
     
@@ -648,13 +657,13 @@ function ArchitectureDiagramFlow() {
       return true;
     });
     
-    console.log(`📊 Total resources in DB: ${resources.length}`);
-    console.log(`   - With VPC: ${withVpc}, Without VPC: ${withoutVpc}`);
-    console.log(`   - Resource types:`, typeCounts);
-    console.log(`🔍 Filter results: ${filtered.length}/${resources.length} resources visible`);
-    if (focusedAccount) console.log(`   - Focused on account: ${focusedAccount}`);
-    if (focusedResourceType) console.log(`   - Focused on type: ${focusedResourceType}`);
-    if (showOnlyConnected) console.log(`   - Showing only connected resources`);
+    debugLog(`📊 Total resources in DB: ${resources.length}`);
+    debugLog(`   - With VPC: ${withVpc}, Without VPC: ${withoutVpc}`);
+    debugLog(`   - Resource types:`, typeCounts);
+    debugLog(`🔍 Filter results: ${filtered.length}/${resources.length} resources visible`);
+    if (focusedAccount) debugLog(`   - Focused on account: ${focusedAccount}`);
+    if (focusedResourceType) debugLog(`   - Focused on type: ${focusedResourceType}`);
+    if (showOnlyConnected) debugLog(`   - Showing only connected resources`);
     
     return filtered;
   }, [resources, uncheckedAccounts, uncheckedVPCs, uncheckedTypes, getAccountKey, focusedAccount, focusedResourceType, showOnlyConnected, connectedResourceIds]);
@@ -1693,20 +1702,24 @@ function ArchitectureDiagramFlow() {
   const visibleNodes = useMemo(() => {
     return nodes.filter(node => !hiddenNodes.has(node.id));
   }, [nodes, hiddenNodes]);
+
+  const nodeIdsKey = useMemo(() => {
+    return nodes.map(n => n.id).sort().join('|');
+  }, [nodes]);
   
   // Convert relationships to React Flow edges with enhanced styling
   useEffect(() => {
     if (filteredRelationships.length === 0) {
-      console.log('⚠️ No relationships to create edges');
+      debugLog('⚠️ No relationships to create edges');
       setEdges([]);
       return;
     }
 
-    console.log(`🔗 Creating edges for ${filteredRelationships.length} relationships`);
+    debugLog(`🔗 Creating edges for ${filteredRelationships.length} relationships`);
     
     // Get all current node IDs for validation
     const nodeIds = new Set(nodes.map(n => n.id));
-    console.log(`📦 Available node IDs:`, Array.from(nodeIds).slice(0, 10), '...');
+    debugLog(`📦 Available node IDs:`, Array.from(nodeIds).slice(0, 10), '...');
 
     // Get connected node IDs for highlighting
     const connectedToHighlighted = new Set();
@@ -1784,10 +1797,10 @@ function ArchitectureDiagramFlow() {
       };
     });
 
-    console.log(`✅ Created ${flowEdges.length} edges`);
-    console.log('Sample edges:', flowEdges.slice(0, 3));
+    debugLog(`✅ Created ${flowEdges.length} edges`);
+    debugLog('Sample edges:', flowEdges.slice(0, 3));
     setEdges(flowEdges);
-  }, [filteredRelationships, nodes, highlightedNode]);
+  }, [filteredRelationships, nodeIdsKey, highlightedNode]);
 
   // Calculate cost estimation
   useEffect(() => {

@@ -1,6 +1,16 @@
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
+const runtimeDefaultFallback = (() => {
+  if (typeof window === 'undefined') return 'http://localhost:8805';
+  const protocol = window.location.protocol || 'http:';
+  const hostname = window.location.hostname || 'localhost';
+  return `${protocol}//${hostname}:8805`;
+})();
+const API_FALLBACK_URL = import.meta.env.VITE_API_FALLBACK_URL || runtimeDefaultFallback;
+
+const normalizeBaseUrl = (url) => (url || '').replace(/\/+$/, '');
+const isApiRequest = (url) => String(url || '').includes('/api/');
 
 // Create axios instance
 const axiosInstance = axios.create({
@@ -102,6 +112,23 @@ axiosInstance.interceptors.response.use(
         window.location.href = '/login';
 
         return Promise.reject(refreshError);
+      }
+    }
+
+    // Fallback for misconfigured API base URL (common in Docker/local setups)
+    if (
+      error.response?.status === 404 &&
+      originalRequest &&
+      !originalRequest._fallbackRetry &&
+      isApiRequest(originalRequest.url)
+    ) {
+      const currentBase = normalizeBaseUrl(originalRequest.baseURL || axiosInstance.defaults.baseURL);
+      const fallbackBase = normalizeBaseUrl(API_FALLBACK_URL);
+
+      if (fallbackBase && currentBase !== fallbackBase) {
+        originalRequest._fallbackRetry = true;
+        originalRequest.baseURL = fallbackBase;
+        return axiosInstance(originalRequest);
       }
     }
 

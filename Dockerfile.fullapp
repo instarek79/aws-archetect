@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System packages: Python build deps + Node.js/npm for frontend dev server
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    gcc \
+    postgresql-client \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Backend deps
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+
+# Frontend deps
+COPY frontend/package*.json /app/frontend/
+RUN npm --prefix /app/frontend install
+
+# App sources
+COPY backend /app/backend
+COPY frontend /app/frontend
+COPY docker/start-fullapp-container.sh /app/docker/start-fullapp-container.sh
+
+RUN chmod +x /app/docker/start-fullapp-container.sh
+
+EXPOSE 8805
+EXPOSE 3030
+
+CMD ["/app/docker/start-fullapp-container.sh"]

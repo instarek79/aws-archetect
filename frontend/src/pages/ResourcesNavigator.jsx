@@ -7,8 +7,6 @@ import {
 import axios from '../utils/axiosConfig';
 import NavBar from '../components/NavBar';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8805';
-
 const TYPE_COLORS = {
   route53_record: '#8C4FFF', route53: '#8C4FFF',
   elb: '#E07941', alb: '#E07941', nlb: '#E07941', elasticloadbalancing: '#E07941',
@@ -135,6 +133,7 @@ function ResourcesNavigator() {
   const [showCertValidationOnly, setShowCertValidationOnly] = useState(false);
   const [importantPathsOnly, setImportantPathsOnly] = useState(false);
   const [showDatabasesInDiagram, setShowDatabasesInDiagram] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [selectedUrl, setSelectedUrl] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [expandedZones, setExpandedZones] = useState(new Set());
@@ -178,7 +177,7 @@ function ResourcesNavigator() {
     setLoading(true);
     setError(null);
     try {
-      const flowsRes = await axios.get(`${API_URL}/api/resources/url-flows`);
+      const flowsRes = await axios.get('/api/resources/url-flows');
       setUrlFlows(flowsRes.data);
       if (flowsRes.data.length > 0 && !selectedUrl) setSelectedUrl(flowsRes.data[0]);
       else if (selectedUrl) {
@@ -296,6 +295,20 @@ function ResourcesNavigator() {
   ]);
 
   useEffect(() => {
+    const keys = Object.keys(groupedUrls);
+    setExpandedZones(prev => {
+      const next = new Set();
+      keys.forEach(k => {
+        if (prev.has(k) || groupBy !== 'zone') next.add(k);
+      });
+      if (next.size === 0) {
+        keys.forEach(k => next.add(k));
+      }
+      return next;
+    });
+  }, [groupedUrls, groupBy]);
+
+  useEffect(() => {
     if (!selectedUrl) return;
     const visible = Object.values(groupedUrls).flat();
     if (!visible.some(flow => flow.record_id === selectedUrl.record_id)) {
@@ -310,22 +323,26 @@ function ResourcesNavigator() {
     if (!selectedUrl) return [];
     const cols = [];
     cols.push({ label: 'DNS Record', items: [{ ...selectedUrl.record, _label: selectedUrl.url }] });
-    const importantServices = [...(selectedUrl.cloudfront || []), ...(selectedUrl.s3_buckets || []), ...(selectedUrl.pipelines || [])];
+    const cloudfront = selectedUrl.cloudfront || [];
+    const s3Buckets = selectedUrl.s3_buckets || [];
+    const loadBalancers = selectedUrl.albs || [];
+    const ec2s = selectedUrl.ec2_instances || [];
+    const pipelines = selectedUrl.pipelines || [];
+    const dbs = selectedUrl.databases || [];
 
-    const col1 = [...(selectedUrl.albs || [])];
-    if (col1.length > 0) cols.push({ label: 'Load Balancers', items: col1 });
-    else if (selectedUrl.record_values?.length > 0) {
+    if (cloudfront.length > 0) cols.push({ label: 'Frontend CDN', items: cloudfront });
+    if (s3Buckets.length > 0) cols.push({ label: 'Frontend Storage', items: s3Buckets });
+
+    if (loadBalancers.length > 0) cols.push({ label: 'Backend Load Balancer', items: loadBalancers });
+    else if (ec2s.length === 0 && selectedUrl.record_values?.length > 0) {
       cols.push({ label: 'Target (unresolved)', items: [{ name: selectedUrl.record_values[0], type: 'unknown', status: 'unresolved', _placeholder: true }] });
     }
 
-    if (importantServices.length > 0) {
-      cols.push({ label: 'CloudFront / S3 / Pipelines', items: importantServices });
+    if (ec2s.length > 0) cols.push({ label: 'Backend Compute', items: ec2s });
+    if (pipelines.length > 0) {
+      cols.push({ label: 'Pipelines', items: pipelines });
     }
 
-    const ec2s = selectedUrl.ec2_instances || [];
-    if (ec2s.length > 0) cols.push({ label: 'EC2 Instances', items: ec2s });
-
-    const dbs = selectedUrl.databases || [];
     if (showDatabasesInDiagram && dbs.length > 0) cols.push({ label: 'Databases (Optional)', items: dbs });
 
     const extras = (selectedUrl.other || []).filter(r =>
@@ -334,6 +351,28 @@ function ResourcesNavigator() {
     if (extras.length > 0) cols.push({ label: 'Other', items: extras });
     return cols;
   }, [selectedUrl, showDatabasesInDiagram]);
+
+  const urlPathSummary = useMemo(() => {
+    if (!selectedUrl) return { frontend: null, backend: null };
+    const hasCloudFront = (selectedUrl.cloudfront || []).length > 0;
+    const hasS3 = (selectedUrl.s3_buckets || []).length > 0;
+    const hasPipelines = (selectedUrl.pipelines || []).length > 0;
+    const hasLb = (selectedUrl.albs || []).length > 0;
+    const hasEc2 = (selectedUrl.ec2_instances || []).length > 0;
+
+    let frontend = null;
+    if (hasCloudFront && hasS3 && hasPipelines) frontend = 'URL -> CloudFront -> S3 <- Pipeline';
+    else if (hasCloudFront && hasS3) frontend = 'URL -> CloudFront -> S3';
+    else if (hasCloudFront) frontend = 'URL -> CloudFront';
+
+    let backend = null;
+    if (hasLb && hasEc2 && hasPipelines) backend = 'URL -> Load Balancer -> EC2 <- Pipeline';
+    else if (hasLb && hasEc2) backend = 'URL -> Load Balancer -> EC2';
+    else if (hasEc2 && hasPipelines) backend = 'URL -> EC2 <- Pipeline';
+    else if (hasEc2) backend = 'URL -> EC2';
+
+    return { frontend, backend };
+  }, [selectedUrl]);
 
   // ---- Edit Resource ----
   const openEditModal = (resource) => {
@@ -361,7 +400,7 @@ function ResourcesNavigator() {
         setShowEditModal(false);
         return;
       }
-      await axios.patch(`${API_URL}/api/resources/url-resource/${editTarget.id}`, payload);
+      await axios.patch(`/api/resources/url-resource/${editTarget.id}`, payload);
       setShowEditModal(false);
       setEditTarget(null);
       showToast('Resource updated');
@@ -383,7 +422,7 @@ function ResourcesNavigator() {
     if (!removeTarget?.id || !selectedUrl?.record_id) return;
     setRemoving(true);
     try {
-      await axios.post(`${API_URL}/api/resources/url-remove-connection`, {
+      await axios.post('/api/resources/url-remove-connection', {
         source_resource_id: selectedUrl.record_id,
         target_resource_id: removeTarget.id,
       });
@@ -408,7 +447,7 @@ function ResourcesNavigator() {
         for (const item of allItems) {
           if (item.id === removeTarget.id) continue;
           try {
-            await axios.post(`${API_URL}/api/resources/url-remove-connection`, {
+            await axios.post('/api/resources/url-remove-connection', {
               source_resource_id: item.id,
               target_resource_id: removeTarget.id,
             });
@@ -435,7 +474,7 @@ function ResourcesNavigator() {
     setShowConnectionsPanel(true);
     setConnectionsLoading(true);
     try {
-      const res = await axios.get(`${API_URL}/api/resources/url-connections/${resource.id}`);
+      const res = await axios.get(`/api/resources/url-connections/${resource.id}`);
       setConnections(res.data);
     } catch {
       setConnections([]);
@@ -446,7 +485,7 @@ function ResourcesNavigator() {
 
   const removeConnectionById = async (conn) => {
     try {
-      await axios.post(`${API_URL}/api/resources/url-remove-connection`, {
+      await axios.post('/api/resources/url-remove-connection', {
         source_resource_id: conn.source_id,
         target_resource_id: conn.target_id,
       });
@@ -481,7 +520,7 @@ function ResourcesNavigator() {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       if (typeFilter) params.set('type_filter', typeFilter);
-      const res = await axios.get(`${API_URL}/api/resources/url-search-resources?${params}`);
+      const res = await axios.get(`/api/resources/url-search-resources?${params}`);
       setLinkSearchResults(res.data);
     } catch (err) {
       setLinkSearchResults([]);
@@ -505,7 +544,7 @@ function ResourcesNavigator() {
     const sourceId = linkSourceNode?.id || selectedUrl?.record_id;
     if (!sourceId) return;
     try {
-      await axios.post(`${API_URL}/api/resources/url-link`, {
+      await axios.post('/api/resources/url-link', {
         source_resource_id: sourceId,
         target_resource_id: targetResource.id,
         label: 'manual_link',
@@ -586,6 +625,21 @@ function ResourcesNavigator() {
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {selectedUrl && (urlPathSummary.frontend || urlPathSummary.backend) && (
+            <div className="bg-slate-900/80 border-b border-slate-700 px-4 py-2 flex flex-wrap gap-2 flex-shrink-0">
+              {urlPathSummary.frontend && (
+                <div className="px-2 py-1 bg-cyan-900/30 border border-cyan-700/40 rounded text-[10px] text-cyan-200">
+                  <span className="font-semibold">Frontend:</span> {urlPathSummary.frontend}
+                </div>
+              )}
+              {urlPathSummary.backend && (
+                <div className="px-2 py-1 bg-emerald-900/30 border border-emerald-700/40 rounded text-[10px] text-emerald-200">
+                  <span className="font-semibold">Backend:</span> {urlPathSummary.backend}
+                </div>
+              )}
             </div>
           )}
 
@@ -766,84 +820,116 @@ function ResourcesNavigator() {
             </div>
 
             <div className="mt-2 pt-2 border-t border-slate-700 space-y-2">
-              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                <SlidersHorizontal className="w-3 h-3" /> Group & Filter
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                  <SlidersHorizontal className="w-3 h-3" /> Group & Filter
+                </div>
+                <button
+                  onClick={() => setShowAdvancedFilters(v => !v)}
+                  className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-[10px] text-slate-300"
+                >
+                  {showAdvancedFilters ? 'Hide' : 'Show'}
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-1 gap-1.5">
                 <select
                   value={groupBy}
                   onChange={(e) => setGroupBy(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                  className="px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
                 >
                   <option value="zone">Group: Zone</option>
                   <option value="account">Group: Target Account</option>
                   <option value="load_balancer">Group: Load Balancer</option>
                   <option value="ip">Group: Target IP</option>
                 </select>
-
-                <select
-                  value={accountFilter}
-                  onChange={(e) => setAccountFilter(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
-                >
-                  <option value="">All target accounts</option>
-                  {groupingOptions.accounts.map(acc => <option key={acc} value={acc}>{acc}</option>)}
-                </select>
-
-                <select
-                  value={lbFilter}
-                  onChange={(e) => setLbFilter(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
-                >
-                  <option value="">All load balancers</option>
-                  {groupingOptions.loadBalancers.map(lb => <option key={lb} value={lb}>{lb}</option>)}
-                </select>
-
-                <select
-                  value={ipFilter}
-                  onChange={(e) => setIpFilter(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
-                >
-                  <option value="">All target IPs</option>
-                  {groupingOptions.ips.map(ip => <option key={ip} value={ip}>{ip}</option>)}
-                </select>
-
-                <select
-                  value={recordTypeFilter}
-                  onChange={(e) => setRecordTypeFilter(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
-                >
-                  <option value="">All record types</option>
-                  <option value="A">A</option>
-                  <option value="AAAA">AAAA</option>
-                  <option value="CNAME">CNAME</option>
-                  <option value="ALIAS">ALIAS</option>
-                </select>
               </div>
 
-              <div className="space-y-1 text-[10px] text-slate-300">
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" checked={showInvalidOnly} onChange={(e) => setShowInvalidOnly(e.target.checked)} />
-                  Invalid A/AAAA targets only
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" checked={showProviderExternalOnly} onChange={(e) => setShowProviderExternalOnly(e.target.checked)} />
-                  Provider/external A records only
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" checked={showCertValidationOnly} onChange={(e) => setShowCertValidationOnly(e.target.checked)} />
-                  Certificate validation CNAME only
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" checked={importantPathsOnly} onChange={(e) => setImportantPathsOnly(e.target.checked)} />
-                  Important paths only (CloudFront/S3/Pipelines)
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" checked={showDatabasesInDiagram} onChange={(e) => setShowDatabasesInDiagram(e.target.checked)} />
-                  Show databases in diagram
-                </label>
-              </div>
+              {showAdvancedFilters && (
+                <>
+                  <div className="grid grid-cols-1 gap-1.5">
+                    <select
+                      value={accountFilter}
+                      onChange={(e) => setAccountFilter(e.target.value)}
+                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                    >
+                      <option value="">All target accounts</option>
+                      {groupingOptions.accounts.map(acc => <option key={acc} value={acc}>{acc}</option>)}
+                    </select>
+
+                    <select
+                      value={lbFilter}
+                      onChange={(e) => setLbFilter(e.target.value)}
+                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                    >
+                      <option value="">All load balancers</option>
+                      {groupingOptions.loadBalancers.map(lb => <option key={lb} value={lb}>{lb}</option>)}
+                    </select>
+
+                    <select
+                      value={ipFilter}
+                      onChange={(e) => setIpFilter(e.target.value)}
+                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                    >
+                      <option value="">All target IPs</option>
+                      {groupingOptions.ips.map(ip => <option key={ip} value={ip}>{ip}</option>)}
+                    </select>
+
+                    <select
+                      value={recordTypeFilter}
+                      onChange={(e) => setRecordTypeFilter(e.target.value)}
+                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                    >
+                      <option value="">All record types</option>
+                      <option value="A">A</option>
+                      <option value="AAAA">AAAA</option>
+                      <option value="CNAME">CNAME</option>
+                      <option value="ALIAS">ALIAS</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1 text-[10px] text-slate-300">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={showInvalidOnly} onChange={(e) => setShowInvalidOnly(e.target.checked)} />
+                      Invalid A/AAAA targets only
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={showProviderExternalOnly} onChange={(e) => setShowProviderExternalOnly(e.target.checked)} />
+                      Provider/external A records only
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={showCertValidationOnly} onChange={(e) => setShowCertValidationOnly(e.target.checked)} />
+                      Certificate validation CNAME only
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={importantPathsOnly} onChange={(e) => setImportantPathsOnly(e.target.checked)} />
+                      Important paths only (CloudFront/S3/Pipelines)
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={showDatabasesInDiagram} onChange={(e) => setShowDatabasesInDiagram(e.target.checked)} />
+                      Show databases in diagram
+                    </label>
+                  </div>
+
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => {
+                        setAccountFilter('');
+                        setLbFilter('');
+                        setIpFilter('');
+                        setRecordTypeFilter('');
+                        setShowInvalidOnly(false);
+                        setShowProviderExternalOnly(false);
+                        setShowCertValidationOnly(false);
+                        setImportantPathsOnly(false);
+                      }}
+                      className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-[10px] text-slate-300"
+                    >
+                      Clear Filters
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto">

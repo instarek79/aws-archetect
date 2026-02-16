@@ -1,21 +1,88 @@
+name: aws-archetect
+
 services:
   db:
     image: postgres:15-alpine
     container_name: aws_architect_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-auth_db}
     ports:
-      - "5433:5432"  # Map host 5433 to container 5432 (avoid conflict with local PostgreSQL)
+      - "${DB_HOST_PORT:-5433}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ${DB_DATA_PATH:-./docker-data/postgres}
+        target: /var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-volumes:
-  postgres_data:
+  backend:
+    profiles: ["split"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aws_architect_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-auth_db}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5}
+    ports:
+      - "${BACKEND_HOST_PORT:-8805}:8805"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8805"]
+
+  frontend:
+    profiles: ["split"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aws_architect_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:${BACKEND_HOST_PORT:-8805}}
+      VITE_API_FALLBACK_URL: ${VITE_API_FALLBACK_URL:-http://localhost:${BACKEND_HOST_PORT:-8805}}
+    ports:
+      - "${FRONTEND_HOST_PORT:-3030}:3030"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3030"]
+
+  app-all:
+    profiles: ["single"]
+    build:
+      context: .
+      dockerfile: Dockerfile.fullapp
+    container_name: aws_architect_all_in_one
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-auth_db}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      BACKEND_PORT: 8805
+      FRONTEND_PORT: 3030
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5}
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:${BACKEND_HOST_PORT:-8805}}
+      VITE_API_FALLBACK_URL: ${VITE_API_FALLBACK_URL:-http://localhost:${BACKEND_HOST_PORT:-8805}}
+    ports:
+      - "${FRONTEND_HOST_PORT:-3030}:3030"
+      - "${BACKEND_HOST_PORT:-8805}:8805"
