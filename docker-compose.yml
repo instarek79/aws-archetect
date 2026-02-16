@@ -2,6 +2,7 @@ name: aws-archetect
 
 services:
   db:
+    profiles: ["postgres"]
     image: postgres:15-alpine
     container_name: aws_architect_postgres
     restart: unless-stopped
@@ -28,18 +29,20 @@ services:
       dockerfile: Dockerfile
     container_name: aws_architect_backend
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
+      DATABASE_TYPE: ${DATABASE_TYPE:-sqlite}
+      SQLITE_DB_PATH: ${SQLITE_DB_PATH:-data/aws_architect.db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-auth_db}
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5}
+    volumes:
+      - type: bind
+        source: ${SQLITE_DATA_PATH:-./docker-data/sqlite}
+        target: /app/data
     ports:
       - "${BACKEND_HOST_PORT:-8805}:8805"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8805"]
@@ -67,22 +70,24 @@ services:
       dockerfile: Dockerfile.fullapp
     container_name: aws_architect_all_in_one
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      DATABASE_TYPE: ${DATABASE_TYPE:-postgresql}
+      DATABASE_TYPE: ${DATABASE_TYPE:-sqlite}
+      SQLITE_DB_PATH: ${SQLITE_DB_PATH:-data/aws_architect.db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-auth_db}
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       BACKEND_PORT: 8805
       FRONTEND_PORT: 3030
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5}
       VITE_API_URL: ${VITE_API_URL:-http://localhost:${BACKEND_HOST_PORT:-8805}}
       VITE_API_FALLBACK_URL: ${VITE_API_FALLBACK_URL:-http://localhost:${BACKEND_HOST_PORT:-8805}}
+    volumes:
+      - type: bind
+        source: ${SQLITE_DATA_PATH:-./docker-data/sqlite}
+        target: /app/backend/data
     ports:
       - "${FRONTEND_HOST_PORT:-3030}:3030"
       - "${BACKEND_HOST_PORT:-8805}:8805"
