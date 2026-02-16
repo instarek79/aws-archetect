@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Globe, Search, ChevronRight, ChevronDown, RefreshCw,
-  X, Plus, Link2, Layers, ArrowRight
+  X, Plus, Link2, Layers, ArrowRight, Edit3, Trash2, Save, Check, AlertTriangle, SlidersHorizontal
 } from 'lucide-react';
 import axios from '../utils/axiosConfig';
 import NavBar from '../components/NavBar';
@@ -49,7 +49,7 @@ const LINK_TYPE_SUGGESTIONS = {
 };
 
 // Flow node card component
-function FlowNode({ resource, label, isSelected, onClick, onAddLink }) {
+function FlowNode({ resource, label, isSelected, onClick, onAddLink, editMode, onRemove, onEdit }) {
   const color = TYPE_COLORS[resource?.type] || '#64748B';
   const active = ['active', 'running', 'deployed', 'available'].includes(resource?.status);
   return (
@@ -57,7 +57,7 @@ function FlowNode({ resource, label, isSelected, onClick, onAddLink }) {
       onClick={onClick}
       className={`relative rounded-lg border cursor-pointer transition-all hover:scale-[1.02] min-w-[200px] max-w-[220px] ${
         isSelected ? 'ring-2 ring-purple-500 bg-slate-700' : 'bg-slate-800 border-slate-600 hover:border-slate-500'
-      }`}
+      } ${editMode ? 'ring-1 ring-dashed ring-amber-500/30' : ''}`}
       style={{ borderLeftWidth: 4, borderLeftColor: color }}
     >
       <div className="p-2.5">
@@ -70,16 +70,43 @@ function FlowNode({ resource, label, isSelected, onClick, onAddLink }) {
             <p className="text-[11px] font-semibold text-white truncate">{label || resource?.name || 'Unknown'}</p>
             <p className="text-[10px] text-slate-400">{TYPE_LABELS[resource?.type] || resource?.type}</p>
           </div>
-          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${active ? 'bg-green-500' : 'bg-red-500'}`} />
+          {!editMode && <div className={`w-2 h-2 rounded-full flex-shrink-0 ${active ? 'bg-green-500' : 'bg-red-500'}`} />}
         </div>
         <div className="mt-1.5 text-[9px] text-slate-500 space-y-0.5">
           {resource?.account_id && <p>Account: ...{resource.account_id.slice(-4)}</p>}
           {resource?.private_ip && <p>IP: {resource.private_ip}</p>}
           {resource?.instance_type && <p>{resource.instance_type}</p>}
           {resource?.dns_name && <p className="truncate">DNS: {resource.dns_name}</p>}
+          {resource?.type_specific_properties?.navigator_notes && (
+            <p className="text-amber-400 truncate">Note: {resource.type_specific_properties.navigator_notes}</p>
+          )}
         </div>
       </div>
-      {onAddLink && (
+      {/* Edit mode action buttons */}
+      {editMode && !resource?._placeholder && (
+        <div className="absolute -top-2 -right-2 flex gap-1 z-10">
+          {onEdit && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(resource); }}
+              className="w-5 h-5 bg-amber-600 rounded-full flex items-center justify-center hover:bg-amber-500 shadow-lg"
+              title="Edit resource"
+            >
+              <Edit3 className="w-2.5 h-2.5 text-white" />
+            </button>
+          )}
+          {onRemove && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRemove(resource); }}
+              className="w-5 h-5 bg-red-600 rounded-full flex items-center justify-center hover:bg-red-500 shadow-lg"
+              title="Remove from flow"
+            >
+              <X className="w-2.5 h-2.5 text-white" />
+            </button>
+          )}
+        </div>
+      )}
+      {/* Add link button (non-edit mode) */}
+      {!editMode && onAddLink && (
         <button
           onClick={(e) => { e.stopPropagation(); onAddLink(resource); }}
           className="absolute -right-2 top-1/2 -translate-y-1/2 w-5 h-5 bg-purple-600 rounded-full flex items-center justify-center hover:bg-purple-500 shadow-lg z-10"
@@ -98,9 +125,36 @@ function ResourcesNavigator() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [groupBy, setGroupBy] = useState('zone');
+  const [accountFilter, setAccountFilter] = useState('');
+  const [lbFilter, setLbFilter] = useState('');
+  const [ipFilter, setIpFilter] = useState('');
+  const [recordTypeFilter, setRecordTypeFilter] = useState('');
+  const [showInvalidOnly, setShowInvalidOnly] = useState(false);
+  const [showProviderExternalOnly, setShowProviderExternalOnly] = useState(false);
+  const [showCertValidationOnly, setShowCertValidationOnly] = useState(false);
+  const [importantPathsOnly, setImportantPathsOnly] = useState(false);
+  const [showDatabasesInDiagram, setShowDatabasesInDiagram] = useState(false);
   const [selectedUrl, setSelectedUrl] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [expandedZones, setExpandedZones] = useState(new Set());
+
+  // Edit mode
+  const [editMode, setEditMode] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editForm, setEditForm] = useState({ name: '', environment: '', notes: '', status: '' });
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Remove confirmation
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [removing, setRemoving] = useState(false);
+
+  // Connections panel
+  const [showConnectionsPanel, setShowConnectionsPanel] = useState(false);
+  const [connections, setConnections] = useState([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
 
   // Manual link modal
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -110,6 +164,13 @@ function ResourcesNavigator() {
   const [linkSearchResults, setLinkSearchResults] = useState([]);
   const [linkSearchLoading, setLinkSearchLoading] = useState(false);
   const searchTimerRef = useRef(null);
+
+  // Toast notification
+  const [toast, setToast] = useState(null);
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   useEffect(() => { fetchData(); }, []);
 
@@ -134,43 +195,271 @@ function ResourcesNavigator() {
     }
   };
 
+  const groupingOptions = useMemo(() => {
+    const accounts = new Set();
+    const lbs = new Set();
+    const ips = new Set();
+    urlFlows.forEach(flow => {
+      (flow.grouping?.target_accounts || []).forEach(a => a && accounts.add(a));
+      (flow.grouping?.load_balancers || []).forEach(lb => lb && lbs.add(lb));
+      (flow.grouping?.target_ips || []).forEach(ip => ip && ips.add(ip));
+      (flow.classification?.unmatched_public_ips || []).forEach(ip => ip && ips.add(ip));
+    });
+    return {
+      accounts: Array.from(accounts).sort(),
+      loadBalancers: Array.from(lbs).sort(),
+      ips: Array.from(ips).sort(),
+    };
+  }, [urlFlows]);
+
   const groupedUrls = useMemo(() => {
     const groups = {};
     const q = searchQuery.toLowerCase();
+
+    const flowMatchesSearch = (flow) => {
+      if (!q) return true;
+      const labels = flow.classification?.labels || [];
+      const searchable = [
+        flow.url,
+        flow.record_type,
+        flow.zone_name,
+        ...(flow.record_values || []),
+        ...(flow.grouping?.target_accounts || []),
+        ...(flow.grouping?.load_balancers || []),
+        ...(flow.grouping?.target_ips || []),
+        ...labels,
+      ].filter(Boolean).map(v => String(v).toLowerCase());
+      return searchable.some(v => v.includes(q));
+    };
+
+    const flowPassesFilters = (flow) => {
+      if (!flowMatchesSearch(flow)) return false;
+      if (recordTypeFilter && flow.record_type !== recordTypeFilter) return false;
+      if (accountFilter && !(flow.grouping?.target_accounts || []).includes(accountFilter)) return false;
+      if (lbFilter && !(flow.grouping?.load_balancers || []).includes(lbFilter)) return false;
+      if (ipFilter) {
+        const ips = [
+          ...(flow.grouping?.target_ips || []),
+          ...(flow.classification?.unmatched_public_ips || []),
+        ];
+        if (!ips.includes(ipFilter)) return false;
+      }
+      if (showInvalidOnly && !flow.classification?.has_invalid_a_target) return false;
+      if (showProviderExternalOnly && !flow.classification?.is_provider_or_external_a_record) return false;
+      if (showCertValidationOnly && !flow.classification?.is_certificate_validation) return false;
+      if (importantPathsOnly && !((flow.important_path_count || 0) > 0)) return false;
+      return true;
+    };
+
+    const groupLabel = (flow) => {
+      if (groupBy === 'account') {
+        const accounts = flow.grouping?.target_accounts || [];
+        if (accounts.length > 1) return `${accounts[0]} (+${accounts.length - 1})`;
+        return accounts[0] || flow.account_id || 'No Target Account';
+      }
+      if (groupBy === 'load_balancer') {
+        return (flow.grouping?.load_balancers || [])[0] || 'No Load Balancer';
+      }
+      if (groupBy === 'ip') {
+        return (flow.grouping?.target_ips || [])[0] || (flow.classification?.unmatched_public_ips || [])[0] || 'No IP Target';
+      }
+      return flow.zone_name || 'Unknown Zone';
+    };
+
     urlFlows.forEach(flow => {
-      if (q && !flow.url?.toLowerCase().includes(q) && !flow.record_type?.toLowerCase().includes(q)) return;
-      const zone = flow.zone_name || 'Unknown Zone';
-      if (!groups[zone]) groups[zone] = [];
-      groups[zone].push(flow);
+      if (!flowPassesFilters(flow)) return;
+      const key = groupLabel(flow);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(flow);
+    });
+
+    Object.keys(groups).forEach(key => {
+      groups[key].sort((a, b) => {
+        const diff = (b.important_path_count || 0) - (a.important_path_count || 0);
+        if (diff !== 0) return diff;
+        return (a.url || '').localeCompare(b.url || '');
+      });
     });
     return groups;
-  }, [urlFlows, searchQuery]);
+  }, [
+    urlFlows,
+    searchQuery,
+    groupBy,
+    accountFilter,
+    lbFilter,
+    ipFilter,
+    recordTypeFilter,
+    showInvalidOnly,
+    showProviderExternalOnly,
+    showCertValidationOnly,
+    importantPathsOnly,
+  ]);
+
+  useEffect(() => {
+    if (!selectedUrl) return;
+    const visible = Object.values(groupedUrls).flat();
+    if (!visible.some(flow => flow.record_id === selectedUrl.record_id)) {
+      setSelectedUrl(visible[0] || null);
+      setSelectedNode(null);
+      setShowConnectionsPanel(false);
+    }
+  }, [groupedUrls, selectedUrl]);
 
   // Build columns for the flow diagram
   const flowColumns = useMemo(() => {
     if (!selectedUrl) return [];
     const cols = [];
-    // Col 0: DNS Record
     cols.push({ label: 'DNS Record', items: [{ ...selectedUrl.record, _label: selectedUrl.url }] });
-    // Col 1: ALBs + CloudFront
-    const col1 = [...(selectedUrl.albs || []), ...(selectedUrl.cloudfront || [])];
-    if (col1.length > 0) cols.push({ label: 'Load Balancer / CDN', items: col1 });
+    const importantServices = [...(selectedUrl.cloudfront || []), ...(selectedUrl.s3_buckets || []), ...(selectedUrl.pipelines || [])];
+
+    const col1 = [...(selectedUrl.albs || [])];
+    if (col1.length > 0) cols.push({ label: 'Load Balancers', items: col1 });
     else if (selectedUrl.record_values?.length > 0) {
       cols.push({ label: 'Target (unresolved)', items: [{ name: selectedUrl.record_values[0], type: 'unknown', status: 'unresolved', _placeholder: true }] });
     }
-    // Col 2: EC2
+
+    if (importantServices.length > 0) {
+      cols.push({ label: 'CloudFront / S3 / Pipelines', items: importantServices });
+    }
+
     const ec2s = selectedUrl.ec2_instances || [];
     if (ec2s.length > 0) cols.push({ label: 'EC2 Instances', items: ec2s });
-    // Col 3: Databases
-    const dbs = selectedUrl.databases || [];
-    if (dbs.length > 0) cols.push({ label: 'Databases', items: dbs });
-    // Col 4: S3 + Pipelines + Other
-    const extras = [...(selectedUrl.s3_buckets || []), ...(selectedUrl.pipelines || []), ...(selectedUrl.other || [])];
-    if (extras.length > 0) cols.push({ label: 'Storage / CI/CD / Other', items: extras });
-    return cols;
-  }, [selectedUrl]);
 
-  // Link modal
+    const dbs = selectedUrl.databases || [];
+    if (showDatabasesInDiagram && dbs.length > 0) cols.push({ label: 'Databases (Optional)', items: dbs });
+
+    const extras = (selectedUrl.other || []).filter(r =>
+      r.type !== 'cloudfront' && r.type !== 's3' && !['codepipeline', 'codebuild', 'codecommit', 'codedeploy'].includes(r.type)
+    );
+    if (extras.length > 0) cols.push({ label: 'Other', items: extras });
+    return cols;
+  }, [selectedUrl, showDatabasesInDiagram]);
+
+  // ---- Edit Resource ----
+  const openEditModal = (resource) => {
+    setEditTarget(resource);
+    setEditForm({
+      name: resource.name || '',
+      environment: resource.environment || '',
+      notes: resource.type_specific_properties?.navigator_notes || '',
+      status: resource.status || '',
+    });
+    setShowEditModal(true);
+  };
+
+  const saveEdit = async () => {
+    if (!editTarget?.id) return;
+    setEditSaving(true);
+    try {
+      const payload = {};
+      if (editForm.name !== (editTarget.name || '')) payload.name = editForm.name;
+      if (editForm.environment !== (editTarget.environment || '')) payload.environment = editForm.environment;
+      if (editForm.status !== (editTarget.status || '')) payload.status = editForm.status;
+      if (editForm.notes !== (editTarget.type_specific_properties?.navigator_notes || '')) payload.notes = editForm.notes;
+
+      if (Object.keys(payload).length === 0) {
+        setShowEditModal(false);
+        return;
+      }
+      await axios.patch(`${API_URL}/api/resources/url-resource/${editTarget.id}`, payload);
+      setShowEditModal(false);
+      setEditTarget(null);
+      showToast('Resource updated');
+      fetchData();
+    } catch (err) {
+      showToast('Failed to save: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // ---- Remove Connection ----
+  const openRemoveConfirm = (resource) => {
+    setRemoveTarget(resource);
+    setShowRemoveConfirm(true);
+  };
+
+  const confirmRemove = async () => {
+    if (!removeTarget?.id || !selectedUrl?.record_id) return;
+    setRemoving(true);
+    try {
+      await axios.post(`${API_URL}/api/resources/url-remove-connection`, {
+        source_resource_id: selectedUrl.record_id,
+        target_resource_id: removeTarget.id,
+      });
+      setShowRemoveConfirm(false);
+      setRemoveTarget(null);
+      showToast('Connection removed');
+      fetchData();
+    } catch (err) {
+      // Try removing between any pair in the chain
+      try {
+        // Find which resource in the chain connects to this one
+        const allItems = [
+          ...(selectedUrl.albs || []),
+          ...(selectedUrl.cloudfront || []),
+          ...(selectedUrl.ec2_instances || []),
+          ...(selectedUrl.databases || []),
+          ...(selectedUrl.s3_buckets || []),
+          ...(selectedUrl.pipelines || []),
+          ...(selectedUrl.other || []),
+        ];
+        let removed = false;
+        for (const item of allItems) {
+          if (item.id === removeTarget.id) continue;
+          try {
+            await axios.post(`${API_URL}/api/resources/url-remove-connection`, {
+              source_resource_id: item.id,
+              target_resource_id: removeTarget.id,
+            });
+            removed = true;
+            break;
+          } catch { /* try next */ }
+        }
+        if (!removed) throw err;
+        setShowRemoveConfirm(false);
+        setRemoveTarget(null);
+        showToast('Connection removed');
+        fetchData();
+      } catch (innerErr) {
+        showToast('Failed to remove connection', 'error');
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  // ---- View Connections ----
+  const viewConnections = async (resource) => {
+    if (!resource?.id) return;
+    setShowConnectionsPanel(true);
+    setConnectionsLoading(true);
+    try {
+      const res = await axios.get(`${API_URL}/api/resources/url-connections/${resource.id}`);
+      setConnections(res.data);
+    } catch {
+      setConnections([]);
+    } finally {
+      setConnectionsLoading(false);
+    }
+  };
+
+  const removeConnectionById = async (conn) => {
+    try {
+      await axios.post(`${API_URL}/api/resources/url-remove-connection`, {
+        source_resource_id: conn.source_id,
+        target_resource_id: conn.target_id,
+      });
+      showToast('Connection removed');
+      // Refresh connections list
+      if (selectedNode?.id) viewConnections(selectedNode);
+      fetchData();
+    } catch (err) {
+      showToast('Failed: ' + (err.response?.data?.detail || err.message), 'error');
+    }
+  };
+
+  // ---- Link modal ----
   const openLinkModal = (sourceNode) => {
     setLinkSourceNode(sourceNode);
     setLinkSearch('');
@@ -223,9 +512,10 @@ function ResourcesNavigator() {
       });
       setShowLinkModal(false);
       setLinkSourceNode(null);
+      showToast('Connection added');
       fetchData();
     } catch (err) {
-      alert('Failed to create link: ' + (err.response?.data?.detail || err.message));
+      showToast('Failed to link: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
@@ -250,6 +540,15 @@ function ResourcesNavigator() {
           <span className="text-xs text-slate-400 px-2 py-0.5 bg-slate-700 rounded">{urlFlows.length} records</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Edit mode toggle */}
+          <button
+            onClick={() => { setEditMode(!editMode); setSelectedNode(null); setShowConnectionsPanel(false); }}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              editMode ? 'bg-amber-600 text-white hover:bg-amber-700' : 'bg-slate-700 hover:bg-slate-600'
+            }`}
+          >
+            {editMode ? <><Check className="w-3 h-3" /> Done Editing</> : <><Edit3 className="w-3 h-3" /> Edit</>}
+          </button>
           <button onClick={fetchData} className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 rounded-lg hover:bg-slate-600 text-xs">
             <RefreshCw className="w-3 h-3" /> Refresh
           </button>
@@ -258,6 +557,14 @@ function ResourcesNavigator() {
           </button>
         </div>
       </header>
+
+      {/* Edit mode banner */}
+      {editMode && (
+        <div className="bg-amber-900/30 border-b border-amber-700/50 px-4 py-1.5 flex items-center gap-2 flex-shrink-0">
+          <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-[11px] text-amber-300">Edit Mode — Click the pencil to edit resource details, or the X to remove a connection from the flow</span>
+        </div>
+      )}
 
       <div className="flex-1 flex min-h-0">
         {/* Main Flow Diagram */}
@@ -269,10 +576,15 @@ function ResourcesNavigator() {
               <span className="text-[10px] px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">{selectedUrl.record_type}</span>
               <ArrowRight className="w-3 h-3 text-slate-500" />
               <span className="text-[10px] text-slate-500 truncate">{selectedUrl.record_values?.join(', ')}</span>
-              <div className="ml-auto">
-                <button onClick={() => openLinkModal(selectedUrl.record)} className="flex items-center gap-1 px-2 py-1 bg-purple-600 rounded hover:bg-purple-700 text-[10px] font-medium">
-                  <Plus className="w-3 h-3" /> Add Connection
-                </button>
+              {selectedUrl.connections?.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 bg-blue-900/40 text-blue-300 rounded">{selectedUrl.connections.length} links</span>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                {!editMode && (
+                  <button onClick={() => openLinkModal(selectedUrl.record)} className="flex items-center gap-1 px-2 py-1 bg-purple-600 rounded hover:bg-purple-700 text-[10px] font-medium">
+                    <Plus className="w-3 h-3" /> Add Connection
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -303,7 +615,6 @@ function ResourcesNavigator() {
               <div className="flex items-start gap-2 min-h-full">
                 {flowColumns.map((col, colIdx) => (
                   <div key={colIdx} className="flex items-center gap-2">
-                    {/* Column */}
                     <div className="flex flex-col gap-3">
                       <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider text-center mb-1">{col.label}</p>
                       {col.items.map((item, itemIdx) => (
@@ -312,12 +623,17 @@ function ResourcesNavigator() {
                           resource={item}
                           label={item._label}
                           isSelected={selectedNode?.id === item.id}
-                          onClick={() => setSelectedNode(selectedNode?.id === item.id ? null : item)}
-                          onAddLink={item._placeholder ? null : openLinkModal}
+                          onClick={() => {
+                            setSelectedNode(selectedNode?.id === item.id ? null : item);
+                            setShowConnectionsPanel(false);
+                          }}
+                          onAddLink={editMode ? null : (item._placeholder ? null : openLinkModal)}
+                          editMode={editMode}
+                          onEdit={editMode && !item._placeholder ? openEditModal : null}
+                          onRemove={editMode && !item._placeholder && colIdx > 0 ? openRemoveConfirm : null}
                         />
                       ))}
                     </div>
-                    {/* Arrow between columns */}
                     {colIdx < flowColumns.length - 1 && (
                       <div className="flex flex-col items-center justify-center px-1 self-center">
                         <ArrowRight className="w-5 h-5 text-blue-500" />
@@ -331,7 +647,7 @@ function ResourcesNavigator() {
 
           {/* Detail panel at bottom */}
           {selectedNode && (
-            <div className="bg-slate-800 border-t border-slate-700 flex-shrink-0 max-h-[200px] overflow-y-auto">
+            <div className="bg-slate-800 border-t border-slate-700 flex-shrink-0 max-h-[220px] overflow-y-auto">
               <div className="p-3 flex items-start gap-4">
                 <div className="flex items-center gap-2 min-w-[200px]">
                   <div className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-[10px]"
@@ -342,7 +658,7 @@ function ResourcesNavigator() {
                     <p className="font-semibold text-sm">{selectedNode.name}</p>
                     <p className="text-[10px] text-slate-400">{TYPE_LABELS[selectedNode.type] || selectedNode.type}</p>
                   </div>
-                  <button onClick={() => setSelectedNode(null)} className="ml-2 p-1 hover:bg-slate-700 rounded"><X className="w-3 h-3" /></button>
+                  <button onClick={() => { setSelectedNode(null); setShowConnectionsPanel(false); }} className="ml-2 p-1 hover:bg-slate-700 rounded"><X className="w-3 h-3" /></button>
                 </div>
                 <div className="flex-1 grid grid-cols-4 gap-x-4 gap-y-1 text-[10px]">
                   {[
@@ -362,14 +678,74 @@ function ResourcesNavigator() {
                       <span className="text-slate-300 font-mono">{value}</span>
                     </div>
                   ))}
+                  {selectedNode.type_specific_properties?.navigator_notes && (
+                    <div className="col-span-4">
+                      <span className="text-amber-500">Notes: </span>
+                      <span className="text-amber-300">{selectedNode.type_specific_properties.navigator_notes}</span>
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={() => openLinkModal(selectedNode)}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 rounded-lg hover:bg-purple-700 text-[10px] font-medium flex-shrink-0"
-                >
-                  <Plus className="w-3 h-3" /> Add Connection
-                </button>
+                <div className="flex flex-col gap-1 flex-shrink-0">
+                  {!editMode && (
+                    <button
+                      onClick={() => openLinkModal(selectedNode)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 rounded-lg hover:bg-purple-700 text-[10px] font-medium"
+                    >
+                      <Plus className="w-3 h-3" /> Add Connection
+                    </button>
+                  )}
+                  <button
+                    onClick={() => openEditModal(selectedNode)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 rounded-lg hover:bg-amber-700 text-[10px] font-medium"
+                  >
+                    <Edit3 className="w-3 h-3" /> Edit Details
+                  </button>
+                  <button
+                    onClick={() => viewConnections(selectedNode)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-600 rounded-lg hover:bg-slate-500 text-[10px] font-medium"
+                  >
+                    <Link2 className="w-3 h-3" /> View Connections
+                  </button>
+                </div>
               </div>
+
+              {/* Connections sub-panel */}
+              {showConnectionsPanel && (
+                <div className="border-t border-slate-700 px-3 py-2">
+                  <p className="text-[10px] text-slate-400 font-semibold mb-1">Connections for {selectedNode.name}</p>
+                  {connectionsLoading ? (
+                    <div className="flex items-center gap-2 py-2"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div><span className="text-[10px] text-slate-500">Loading...</span></div>
+                  ) : connections.length === 0 ? (
+                    <p className="text-[10px] text-slate-500 py-1">No connections found</p>
+                  ) : (
+                    <div className="space-y-1 max-h-[100px] overflow-y-auto">
+                      {connections.map(conn => (
+                        <div key={conn.id} className="flex items-center gap-2 text-[10px] p-1.5 bg-slate-700/50 rounded group">
+                          <div className="w-5 h-5 rounded flex items-center justify-center text-white text-[7px] font-bold flex-shrink-0"
+                            style={{ backgroundColor: TYPE_COLORS[conn.source_type] || '#64748B' }}>
+                            {TYPE_ICONS[conn.source_type] || '?'}
+                          </div>
+                          <span className="truncate text-slate-300">{conn.source_name}</span>
+                          <ArrowRight className="w-3 h-3 text-blue-400 flex-shrink-0" />
+                          <div className="w-5 h-5 rounded flex items-center justify-center text-white text-[7px] font-bold flex-shrink-0"
+                            style={{ backgroundColor: TYPE_COLORS[conn.target_type] || '#64748B' }}>
+                            {TYPE_ICONS[conn.target_type] || '?'}
+                          </div>
+                          <span className="truncate text-slate-300">{conn.target_name}</span>
+                          <span className="text-slate-500 flex-shrink-0">({conn.label})</span>
+                          <button
+                            onClick={() => removeConnectionById(conn)}
+                            className="ml-auto p-0.5 text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition flex-shrink-0"
+                            title="Remove this connection"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -387,6 +763,87 @@ function ResourcesNavigator() {
                 placeholder="Search records..."
                 className="w-full pl-8 pr-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-xs text-white placeholder-slate-400 focus:border-purple-500 focus:outline-none"
               />
+            </div>
+
+            <div className="mt-2 pt-2 border-t border-slate-700 space-y-2">
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                <SlidersHorizontal className="w-3 h-3" /> Group & Filter
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <select
+                  value={groupBy}
+                  onChange={(e) => setGroupBy(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="zone">Group: Zone</option>
+                  <option value="account">Group: Target Account</option>
+                  <option value="load_balancer">Group: Load Balancer</option>
+                  <option value="ip">Group: Target IP</option>
+                </select>
+
+                <select
+                  value={accountFilter}
+                  onChange={(e) => setAccountFilter(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">All target accounts</option>
+                  {groupingOptions.accounts.map(acc => <option key={acc} value={acc}>{acc}</option>)}
+                </select>
+
+                <select
+                  value={lbFilter}
+                  onChange={(e) => setLbFilter(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">All load balancers</option>
+                  {groupingOptions.loadBalancers.map(lb => <option key={lb} value={lb}>{lb}</option>)}
+                </select>
+
+                <select
+                  value={ipFilter}
+                  onChange={(e) => setIpFilter(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">All target IPs</option>
+                  {groupingOptions.ips.map(ip => <option key={ip} value={ip}>{ip}</option>)}
+                </select>
+
+                <select
+                  value={recordTypeFilter}
+                  onChange={(e) => setRecordTypeFilter(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-[10px] text-white focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">All record types</option>
+                  <option value="A">A</option>
+                  <option value="AAAA">AAAA</option>
+                  <option value="CNAME">CNAME</option>
+                  <option value="ALIAS">ALIAS</option>
+                </select>
+              </div>
+
+              <div className="space-y-1 text-[10px] text-slate-300">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showInvalidOnly} onChange={(e) => setShowInvalidOnly(e.target.checked)} />
+                  Invalid A/AAAA targets only
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showProviderExternalOnly} onChange={(e) => setShowProviderExternalOnly(e.target.checked)} />
+                  Provider/external A records only
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showCertValidationOnly} onChange={(e) => setShowCertValidationOnly(e.target.checked)} />
+                  Certificate validation CNAME only
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={importantPathsOnly} onChange={(e) => setImportantPathsOnly(e.target.checked)} />
+                  Important paths only (CloudFront/S3/Pipelines)
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showDatabasesInDiagram} onChange={(e) => setShowDatabasesInDiagram(e.target.checked)} />
+                  Show databases in diagram
+                </label>
+              </div>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto">
@@ -417,7 +874,7 @@ function ResourcesNavigator() {
                     return (
                       <div
                         key={`${flow.record_id}-${idx}`}
-                        onClick={() => { setSelectedUrl(flow); setSelectedNode(null); }}
+                        onClick={() => { setSelectedUrl(flow); setSelectedNode(null); setShowConnectionsPanel(false); }}
                         className={`px-3 py-2 border-b border-slate-700/50 cursor-pointer transition hover:bg-slate-700 ${
                           selectedUrl?.record_id === flow.record_id ? 'bg-purple-900/30 border-l-2 border-l-purple-500' : 'pl-6'
                         }`}
@@ -433,6 +890,18 @@ function ResourcesNavigator() {
                           {flow.albs?.length > 0 && <span className="text-[9px] px-1 bg-orange-900/40 text-orange-300 rounded">{flow.albs.length} ALB</span>}
                           {flow.ec2_instances?.length > 0 && <span className="text-[9px] px-1 bg-yellow-900/40 text-yellow-300 rounded">{flow.ec2_instances.length} EC2</span>}
                           {flow.pipelines?.length > 0 && <span className="text-[9px] px-1 bg-blue-900/40 text-blue-300 rounded">{flow.pipelines.length} CI/CD</span>}
+                          {flow.classification?.is_certificate_validation && (
+                            <span className="text-[9px] px-1 bg-cyan-900/40 text-cyan-300 rounded">cert-validation</span>
+                          )}
+                          {flow.classification?.has_invalid_a_target && (
+                            <span className="text-[9px] px-1 bg-red-900/40 text-red-300 rounded">invalid-ip</span>
+                          )}
+                          {flow.classification?.is_provider_or_external_a_record && (
+                            <span className="text-[9px] px-1 bg-amber-900/40 text-amber-300 rounded">provider/external</span>
+                          )}
+                          {(flow.important_path_count || 0) > 0 && (
+                            <span className="text-[9px] px-1 bg-emerald-900/40 text-emerald-300 rounded">important-path</span>
+                          )}
                         </div>
                       </div>
                     );
@@ -443,6 +912,128 @@ function ResourcesNavigator() {
           </div>
         </div>
       </div>
+
+      {/* ===== MODALS ===== */}
+
+      {/* Edit Resource Modal */}
+      {showEditModal && editTarget && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={() => setShowEditModal(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl w-[440px] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-amber-400" /> Edit Resource
+              </h3>
+              <button onClick={() => setShowEditModal(false)} className="p-1 hover:bg-slate-700 rounded"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              {/* Resource info header */}
+              <div className="flex items-center gap-2 p-2 bg-slate-700/50 rounded-lg">
+                <div className="w-8 h-8 rounded flex items-center justify-center text-white text-[9px] font-bold"
+                  style={{ backgroundColor: TYPE_COLORS[editTarget.type] || '#64748B' }}>
+                  {TYPE_ICONS[editTarget.type] || '?'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{editTarget.name}</p>
+                  <p className="text-[10px] text-slate-400">{TYPE_LABELS[editTarget.type] || editTarget.type} &middot; ID: {editTarget.id}</p>
+                </div>
+              </div>
+
+              {/* Name */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-medium block mb-1">Name</label>
+                <input
+                  type="text" value={editForm.name}
+                  onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Environment */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-medium block mb-1">Environment</label>
+                <select
+                  value={editForm.environment}
+                  onChange={(e) => setEditForm(f => ({ ...f, environment: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:border-amber-500 focus:outline-none"
+                >
+                  <option value="">Not set</option>
+                  <option value="production">Production</option>
+                  <option value="staging">Staging</option>
+                  <option value="development">Development</option>
+                  <option value="testing">Testing</option>
+                </select>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-medium block mb-1">Status</label>
+                <select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm(f => ({ ...f, status: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:border-amber-500 focus:outline-none"
+                >
+                  <option value="">Not set</option>
+                  <option value="active">Active</option>
+                  <option value="running">Running</option>
+                  <option value="available">Available</option>
+                  <option value="deployed">Deployed</option>
+                  <option value="stopped">Stopped</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="deprecated">Deprecated</option>
+                </select>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-medium block mb-1">Navigator Notes</label>
+                <textarea
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                  rows={3}
+                  placeholder="Add notes about this resource in the flow..."
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none resize-none"
+                />
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-700 flex justify-end gap-2">
+              <button onClick={() => setShowEditModal(false)} className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 text-xs">Cancel</button>
+              <button onClick={saveEdit} disabled={editSaving}
+                className="flex items-center gap-1 px-4 py-2 bg-amber-600 rounded-lg hover:bg-amber-700 text-xs font-medium disabled:opacity-50">
+                {editSaving ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : <Save className="w-3 h-3" />}
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove Confirmation Modal */}
+      {showRemoveConfirm && removeTarget && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={() => setShowRemoveConfirm(false)}>
+          <div className="bg-slate-800 border border-red-700/50 rounded-xl w-[400px] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-slate-700 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <h3 className="font-bold text-sm">Remove Connection</h3>
+            </div>
+            <div className="p-4">
+              <p className="text-sm text-slate-300 mb-3">
+                Remove <strong className="text-white">{removeTarget.name}</strong> ({TYPE_LABELS[removeTarget.type] || removeTarget.type}) from this URL flow?
+              </p>
+              <p className="text-[10px] text-slate-500">
+                This will delete the relationship connecting this resource in the flow. The resource itself will not be deleted.
+              </p>
+            </div>
+            <div className="p-4 border-t border-slate-700 flex justify-end gap-2">
+              <button onClick={() => setShowRemoveConfirm(false)} className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 text-xs">Cancel</button>
+              <button onClick={confirmRemove} disabled={removing}
+                className="flex items-center gap-1 px-4 py-2 bg-red-600 rounded-lg hover:bg-red-700 text-xs font-medium disabled:opacity-50">
+                {removing ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : <Trash2 className="w-3 h-3" />}
+                Remove Connection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Manual Link Modal */}
       {showLinkModal && (
@@ -540,6 +1131,16 @@ function ResourcesNavigator() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-xl text-sm font-medium transition-all ${
+          toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'
+        }`}>
+          {toast.type === 'error' ? <AlertTriangle className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+          {toast.msg}
         </div>
       )}
     </div>

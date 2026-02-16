@@ -209,6 +209,7 @@ def get_url_flows(
     across ALL accounts by comparing record values to resource dns_name fields.
     Also includes manually linked resources via relationships.
     """
+    import ipaddress
     import json
     
     def get_props(r):
@@ -287,9 +288,12 @@ def get_url_flows(
     relationships = db.query(ResourceRelationship).all()
     outgoing_map = {}
     incoming_map = {}
+    rel_lookup = {}  # (source_id, target_id) -> relationship
     for rel in relationships:
         outgoing_map.setdefault(rel.source_resource_id, []).append(rel.target_resource_id)
         incoming_map.setdefault(rel.target_resource_id, []).append(rel.source_resource_id)
+        rel_lookup[(rel.source_resource_id, rel.target_resource_id)] = rel
+        rel_lookup[(rel.target_resource_id, rel.source_resource_id)] = rel
     
     def get_neighbors(resource_id):
         """Get all resources connected via relationships (both directions)"""
@@ -376,11 +380,13 @@ def get_url_flows(
     def bfs_collect(start_ids, record_id):
         """BFS through ALL relationships starting from start_ids.
         Returns dict of resource_id -> resource for the entire reachable chain.
-        Skips route53/route53_record types to avoid looping back."""
+        Skips route53/route53_record types to avoid looping back.
+        Also collects relationship IDs traversed."""
         visited = set(start_ids)
         visited.add(record_id)
         queue = list(start_ids)
         collected = {}
+        collected_rel_ids = set()
         
         while queue:
             rid = queue.pop(0)
@@ -388,11 +394,15 @@ def get_url_flows(
             if r:
                 collected[rid] = r
             for neighbor in get_neighbors(rid):
+                # Track the relationship
+                rel = rel_lookup.get((rid, neighbor.id))
+                if rel:
+                    collected_rel_ids.add(rel.id)
                 if neighbor.id not in visited and neighbor.type not in ('route53', 'route53_record'):
                     visited.add(neighbor.id)
                     queue.append(neighbor.id)
         
-        return collected
+        return collected, collected_rel_ids
 
     # Resource type categorization
     ELB_TYPES = {'elb', 'alb', 'nlb', 'elasticloadbalancing'}
@@ -402,6 +412,33 @@ def get_url_flows(
     S3_TYPES = {'s3'}
     PIPE_TYPES = {'codepipeline', 'codebuild', 'codecommit', 'codedeploy'}
     
+    def is_ip(value):
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except Exception:
+            return False
+
+    def is_public_ip(value):
+        try:
+            ip = ipaddress.ip_address(value)
+            return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved)
+        except Exception:
+            return False
+
+    def is_certificate_validation_record(record_name, record_type, record_values):
+        name = (record_name or '').lower()
+        rtype = (record_type or '').upper()
+        values = [str(v).lower() for v in (record_values or [])]
+
+        if rtype != 'CNAME':
+            return False
+        if '_acme-challenge' in name:
+            return True
+        if any('acm-validations.aws' in v for v in values):
+            return True
+        return False
+
     url_flows = []
     
     for record in dns_records:
@@ -415,7 +452,32 @@ def get_url_flows(
         
         # Step 2: BFS through relationships from all direct matches to find full chain
         start_ids = {r.id for r in direct_matches}
-        all_chain = bfs_collect(start_ids, record.id)
+        all_chain, chain_rel_ids = bfs_collect(start_ids, record.id)
+        
+        # Also collect relationships from the record itself
+        for tid in outgoing_map.get(record.id, []):
+            rel = rel_lookup.get((record.id, tid))
+            if rel:
+                chain_rel_ids.add(rel.id)
+        for sid in incoming_map.get(record.id, []):
+            rel = rel_lookup.get((record.id, sid))
+            if rel:
+                chain_rel_ids.add(rel.id)
+        
+        # Build connections list with relationship details
+        connections = []
+        for rel_id in chain_rel_ids:
+            for rel in relationships:
+                if rel.id == rel_id:
+                    connections.append({
+                        "id": rel.id,
+                        "source_id": rel.source_resource_id,
+                        "target_id": rel.target_resource_id,
+                        "type": rel.relationship_type,
+                        "label": rel.label or rel.relationship_type,
+                        "auto_detected": rel.auto_detected,
+                    })
+                    break
         
         # Categorize all collected resources
         albs, cloudfront_list, ec2_list, db_list = [], [], [], []
@@ -438,6 +500,36 @@ def get_url_flows(
                 other_list.append(r)
         
         total_connections = len(all_chain)
+
+        ip_targets = [val for val in record_values if isinstance(val, str) and is_ip(val)]
+        unmatched_public_ips = []
+        matched_ip_targets = []
+        for ip_val in ip_targets:
+            if ip_val in public_ip_index or ip_val in private_ip_index:
+                matched_ip_targets.append(ip_val)
+            elif is_public_ip(ip_val):
+                unmatched_public_ips.append(ip_val)
+
+        is_cert_validation = is_certificate_validation_record(record.name, record_type, record_values)
+        has_invalid_a_target = record_type in ('A', 'AAAA') and len(unmatched_public_ips) > 0
+        is_provider_or_external_a_record = (
+            record_type in ('A', 'AAAA') and
+            len(unmatched_public_ips) > 0 and
+            total_connections == 0
+        )
+
+        target_accounts = sorted({r.account_id for r in all_chain.values() if r.account_id})
+        load_balancer_names = sorted({r.name for r in albs if r.name})
+        record_target_ips = sorted({val for val in ip_targets})
+        classification_labels = []
+        if is_cert_validation:
+            classification_labels.append('certificate_validation')
+        if has_invalid_a_target:
+            classification_labels.append('invalid_ip_target')
+        if is_provider_or_external_a_record:
+            classification_labels.append('provider_or_external_a_record')
+
+        important_path_count = len(cloudfront_list) + len(s3_list) + len(pipeline_list)
         
         url_flows.append({
             "url": record.name,
@@ -455,10 +547,30 @@ def get_url_flows(
             "pipelines": [resource_to_dict(r) for r in pipeline_list],
             "other": [resource_to_dict(r) for r in other_list],
             "has_connections": total_connections > 0,
+            "connections": connections,
+            "important_path_count": important_path_count,
+            "classification": {
+                "is_certificate_validation": is_cert_validation,
+                "has_invalid_a_target": has_invalid_a_target,
+                "is_provider_or_external_a_record": is_provider_or_external_a_record,
+                "unmatched_public_ips": unmatched_public_ips,
+                "matched_ip_targets": matched_ip_targets,
+                "labels": classification_labels,
+            },
+            "grouping": {
+                "target_accounts": target_accounts,
+                "load_balancers": load_balancer_names,
+                "target_ips": record_target_ips,
+            },
         })
     
-    # Sort: connected first, then alphabetically
-    url_flows.sort(key=lambda f: (not f['has_connections'], f['url']))
+    # Sort with focus on demonstrative paths first (CloudFront/S3/Pipelines), then connected, then URL
+    url_flows.sort(key=lambda f: (
+        -(f.get('important_path_count', 0)),
+        not f['has_connections'],
+        not f.get('classification', {}).get('has_invalid_a_target', False),
+        f['url']
+    ))
     
     return url_flows
 
@@ -527,6 +639,113 @@ def unlink_resources(
     db.delete(rel)
     db.commit()
     return {"message": "Link removed"}
+
+
+@router.get("/url-connections/{resource_id}")
+def get_resource_connections(
+    resource_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all connections (relationships) for a specific resource in Navigator"""
+    from app.models import ResourceRelationship
+    
+    rels = db.query(ResourceRelationship).filter(
+        (ResourceRelationship.source_resource_id == resource_id) |
+        (ResourceRelationship.target_resource_id == resource_id)
+    ).all()
+    
+    result = []
+    for rel in rels:
+        source = db.query(Resource).filter(Resource.id == rel.source_resource_id).first()
+        target = db.query(Resource).filter(Resource.id == rel.target_resource_id).first()
+        result.append({
+            "id": rel.id,
+            "source_id": rel.source_resource_id,
+            "target_id": rel.target_resource_id,
+            "source_name": source.name if source else "Unknown",
+            "source_type": source.type if source else "",
+            "target_name": target.name if target else "Unknown",
+            "target_type": target.type if target else "",
+            "relationship_type": rel.relationship_type,
+            "label": rel.label or rel.relationship_type,
+            "auto_detected": rel.auto_detected,
+        })
+    return result
+
+
+class RemoveConnectionRequest(BaseModel):
+    source_resource_id: int
+    target_resource_id: int
+
+
+@router.post("/url-remove-connection")
+def remove_connection(
+    request: RemoveConnectionRequest,
+    db: Session = Depends(get_db)
+):
+    """Remove connection between two resources (both directions)"""
+    from app.models import ResourceRelationship
+    
+    rels = db.query(ResourceRelationship).filter(
+        ((ResourceRelationship.source_resource_id == request.source_resource_id) &
+         (ResourceRelationship.target_resource_id == request.target_resource_id)) |
+        ((ResourceRelationship.source_resource_id == request.target_resource_id) &
+         (ResourceRelationship.target_resource_id == request.source_resource_id))
+    ).all()
+    
+    if not rels:
+        raise HTTPException(status_code=404, detail="No connection found between these resources")
+    
+    count = len(rels)
+    for rel in rels:
+        db.delete(rel)
+    db.commit()
+    return {"message": f"Removed {count} connection(s)", "count": count}
+
+
+class EditResourceRequest(BaseModel):
+    name: str = None
+    environment: str = None
+    notes: str = None
+    status: str = None
+
+
+@router.patch("/url-resource/{resource_id}")
+def edit_navigator_resource(
+    resource_id: int,
+    request: EditResourceRequest,
+    db: Session = Depends(get_db)
+):
+    """Edit resource fields from Navigator (name, environment, notes, status)"""
+    resource = db.query(Resource).filter(Resource.id == resource_id).first()
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    
+    import json
+    updated = []
+    if request.name is not None:
+        resource.name = request.name
+        updated.append("name")
+    if request.environment is not None:
+        resource.environment = request.environment
+        updated.append("environment")
+    if request.status is not None:
+        resource.status = request.status
+        updated.append("status")
+    if request.notes is not None:
+        props = resource.type_specific_properties or {}
+        if isinstance(props, str):
+            try:
+                props = json.loads(props)
+            except:
+                props = {}
+        props['navigator_notes'] = request.notes
+        resource.type_specific_properties = props
+        updated.append("notes")
+    
+    db.commit()
+    db.refresh(resource)
+    return {"message": f"Updated: {', '.join(updated)}", "updated_fields": updated}
 
 
 @router.get("/url-search-resources")
